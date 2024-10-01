@@ -1,5 +1,14 @@
 """
 Program to remove correlated noise stripes from Roman ST images.
+KL To do list:
+- Finish the transpose interpolation function
+- Write permanent mask function
+- Write object mask function
+- Link with config file
+- Loop through SCAs
+- Implement conjugate gradient descent solution
+- Write outputs
+
 """
 import os
 import numpy as np
@@ -12,24 +21,26 @@ input_dir = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/simple/'
 image_prefix = 'Roman_WAS_simple_model_'
 labnoise_prefix = 'fs/scratch/PCON0003/cond0007/anl-run-in-prod/labnoise/slope_'
 filter = 'H158'
-model_params = {'constant': 1, 'linear': '2'} # KL this is probably sufficient
+model_params = {'constant': 1, 'linear': 2}
 
 
 class sca_img:
     """
     Class defining an SCA image object.
     Attributes:
-        id: the SCA id
+        scaid: the SCA id
+        obsid: the observation id
         ra_ctr: RA coordinate of the SCA image center
         dec_ctr: dec coordinate of the SCA image center
         image: the SCA image (4088x4088) (KL: np array or pd dataframe?_
         shape: shape of the image
         wcs: the astropy.wcs object associated with this SCA
     Functions:
-    KL to do: idk about this whole thing
+    apply_noise: apply the appropriate lab noise frame to the SCA image
+    get_overlap: figure out which other SCA images overlap this one
     """
     def __init__(self):
-        file = fits.open(input_dir+image_prefix+str(self))
+        file = fits.open(input_dir+image_prefix+str(self)) #KL 'self' would have to be 'obsid_sca' for this to work
         self.image = np.copy(file[1].data())
         self.shape = np.shape(self.image)
         self.w = wcs.WCS(file[1].header)
@@ -49,6 +60,7 @@ def get_scas(observation):
     Function to get an array of SCA images for an observation
     :param observation: an observation object
     :return: numpy array with all the SCA images
+    KL is not sure if this is useful at all
     """
     n_scas = len(observation.sca_list)
     sca_images = np.zeros((n_scas, 4088, 4088))
@@ -71,7 +83,6 @@ class ds_parameters:
     Functions:
         params_2_images: reshape params into the 2D array
         flatten_params: reshape params into 1D vector
-    KL to do:
     """
     def __init__(self, model):
         self.model = model
