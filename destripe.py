@@ -10,6 +10,7 @@ import re
 # KL: Placeholders, some of these could be input arguments or in a config or something
 input_dir = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/simple/'
 image_prefix = 'Roman_WAS_simple_model_'
+labnoise_prefix = 'fs/scratch/PCON0003/cond0007/anl-run-in-prod/labnoise/slope_'
 filter = 'H158'
 model_params = {'constant': 1, 'linear': '2'} # KL this is probably sufficient
 
@@ -35,29 +36,13 @@ class sca_img:
         self.ra_ctr = self.w.wcs.crval[0]
         self.dec_ctr = self.w.wcs.crval[1]
 
-class observation:
-    """
-    Observation object specifies a particular Roman WAS observation.
-    Attributes:
-        ra_ctr: RA coordinate of the observation center
-        dec_ctr: dec coordinate of the observation center
-        scas: list of the SCAs in this image
-        ds_params: destriping parameters for this observation
-    Functions:
-        which_scas: generate the list of scas that overlap this observation. saved as .scas attr
-    KL to do: incorporate ds_params; incorporate SCAs
-    """
-    def __init__(self, id, sca_list):
-        self.id = id
-        self.sca_list = []
+    def apply_noise(self):
+        noiseframe = np.copy(fits.open(labnoise_prefix+self.obsid+'_'+self.scaid)['PRIMARY'].data)
+        self.image += noiseframe
+        return self.image
 
-    def which_scas(self):
-        for file in os.listdir(input_dir+image_prefix+filter+'_'+self.id+'_*'):
-            m = re.search(r'(?P<filter>\D\d+)_(?P<obsid>\d+)_(?P<sca>\d+)', file)
-            sca_file = m.groupdict()['filter']+'_'+m.groupdict()['obsid']+'_'+m.groupdict()['sca']
-            self.sca_list.append(sca_file)
-        return self.sca_list
-
+    def get_overlap(self):
+        # KL: use chris utilities to get overlapping scas
 
 def get_scas(observation):
     """
@@ -77,7 +62,7 @@ def get_scas(observation):
 
 class ds_parameters:
     """
-    Class holding the destriping parameters for a given mosaic/image.
+    Class holding the destriping parameters for a given image.
     Attributes:
         model: which destriping model to use, which specifies the number of parameters per row based on the
          model_params dict
@@ -88,16 +73,18 @@ class ds_parameters:
         flatten_params: reshape params into 1D vector
     KL to do:
     """
-    def __init__(self, model, observation, scas):
-        """
-
-        :param model: destriping model choice
-        :param observation: an observation object
-        :param scas: a dataframe of sca objects for the input observation
-        """
+    def __init__(self, model):
         self.model = model
-        self.params = np.ones((len(observation.which_scas())*scas.shape[0]*model_params[model]))
+        self.params_per_row = model_params[str(self.model)]
+        self.params = np.zeros((len(all_scas), n_rows*self.params_per_row))
 
+    def params_2_images(self):
+        self.params = np.reshape(self.params, ((len(all_scas), n_rows*self.params_per_row)))
+        return self.params
+
+    def flatten_params(self):
+        self.params = np.ravel(self.params)
+        return self.params
 
 # KL: Adapted from Naim CiC algorithm
 @njit("(f8[:, :], f8[:, :], f8, i8)")
@@ -122,6 +109,8 @@ def T_interpolate(
     d_xy (float): Grid size in x and y directions (image A pixel spacing in arcsec I think)
 
     n_grid (int): Number of grid points for x and y directions. =4088
+
+    KL: interpolation weights and effective gain in here??
 
     """
 
@@ -152,4 +141,8 @@ def T_interpolate(
 
         interpolated_image[xp, yp] += dx * dy
 
+    return interpolated_image
+
+#for loop: check if image B overlaps image A; if yes, make interpolated B->A;
+# add to J_A w/ some interp. weight and effective gain; divide by A effective gain and number in the interpolation
 
