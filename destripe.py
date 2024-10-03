@@ -14,14 +14,30 @@ import os
 import numpy as np
 from astropy.io import fits
 from astropy import wcs
+import compareutils
 import re
 
-# KL: Placeholders, some of these could be input arguments or in a config or something
+# KL: Placeholders, some of these should be input arguments or in a config or something
 input_dir = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/simple/'
 image_prefix = 'Roman_WAS_simple_model_'
 labnoise_prefix = 'fs/scratch/PCON0003/cond0007/anl-run-in-prod/labnoise/slope_'
 filter = 'H158'
 model_params = {'constant': 1, 'linear': 2}
+permanent_mask = '/users/PCON0003/cond0007/imcom/coadd-test-fall2022/permanent_mask_220730.fits'
+outfile = '/fs/scratch/PCON0003/klaliotis/destripe/destripe_'+filter+'_out.txt'
+
+
+def write_to_file(text):
+    """
+    Function to write some text to an output file
+    :param text: a string to print
+    :return: nothing
+    """
+    global outfile
+    with open(outfile,"w") as f:
+        f.write(text)
+    with open(outfile, "r") as f:
+        print(f.readlines())
 
 
 class sca_img:
@@ -38,14 +54,18 @@ class sca_img:
     Functions:
     apply_noise: apply the appropriate lab noise frame to the SCA image
     get_overlap: figure out which other SCA images overlap this one
+    apply_permanent_mask: apply the SCA permanent pixel mask to the image
+    apply_object_mask: mask out bright objects from the image
     """
-    def __init__(self):
-        file = fits.open(input_dir+image_prefix+str(self)) #KL 'self' would have to be 'obsid_sca' for this to work
-        self.image = np.copy(file[1].data())
+    def __init__(self, obsid, scaid):
+        file = fits.open(input_dir+image_prefix+str(obsid)+'_'+str(sca))
+        self.image = np.copy(file['SCI'].data())
         self.shape = np.shape(self.image)
         self.w = wcs.WCS(file[1].header)
         self.ra_ctr = self.w.wcs.crval[0]
         self.dec_ctr = self.w.wcs.crval[1]
+        self.obsid = obsid
+        self.scaid = scaid
 
     def apply_noise(self):
         noiseframe = np.copy(fits.open(labnoise_prefix+self.obsid+'_'+self.scaid)['PRIMARY'].data)
@@ -54,6 +74,19 @@ class sca_img:
 
     def get_overlap(self):
         # KL: use chris utilities to get overlapping scas
+
+    def apply_permanent_mask(self):
+        pm = np.copy(fits.open(permanent_mask)[0].data[self.scaid])
+        self.image = self.image * pm
+        return self.image
+
+    def apply_object_mask(self):
+        median = np.median(image)
+        for i in range(self.shape[0]):
+            for j in range(self.shape[1]):
+                if self.image[i,j]>=1.5*median:
+                    self.image[i-2:i+2,j-2:j+2]=0
+        return self.image
 
 def get_scas(observation):
     """
