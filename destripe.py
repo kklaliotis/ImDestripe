@@ -24,6 +24,8 @@ filter = 'H158'
 model_params = {'constant': 1, 'linear': 2}
 permanent_mask = '/users/PCON0003/cond0007/imcom/coadd-test-fall2022/permanent_mask_220730.fits'
 outfile = '/fs/scratch/PCON0003/klaliotis/destripe/destripe_'+filter+'_out.txt'
+tempfile = '/path/to/tempfiles/'
+s_in  = 0.11
 
 
 def write_to_file(text):
@@ -188,10 +190,24 @@ def interpolate_image(target_wcs, ref_wcs, ref_image):
     interp_image = ndimage.map_coordinates(ref_image, [[x_target], [y_target]])
     return interp_image
 
+def check_overlap(target_wcs, ref_wcs):
+    """
+    Check if a reference SCA overlaps a target SCA
+    :param target_sca: an SCA object
+    :param ref_sca:
+    :return: Bool; whether the two SCAs overlap
+    """
+    wcs_list = [target_wcs,ref_wcs]
+    ov_mat = compareutils.get_overlap_matrix(wcs_list)
+    return np.any(ov_mat[0, 1])
+
+
 ############################ Main Sequence ############################
 
 all_scas = get_scas()
 
+# In this chunk of code, we iterate through all the SCAs and create interpolated
+# versions of them from all the other SCAs
 for i,sca in enumerate(all_scas):
     m = re.search(r'_(\d+)_(\d+)', sca)
     obsid_A = m.group(1)
@@ -200,15 +216,28 @@ for i,sca in enumerate(all_scas):
     I_A.apply_noise()
     I_A.apply_permanent_mask()
     I_A.apply_permanent_mask()
+
+    I_A_interp = np.zeros(I_A.shape)
+    n_BinA = 0
+
     for sca_b in all_scas:
         m = re.search(r'_(\d+)_(\d+)', sca)
         obsid_B = m.group(1)
         scaid_B = m.group(2)
+
         if not obsid_B == obsid_A:
             I_B = sca_img(obsid_B, scaid_B)
             I_B.apply_noise()
             I_B.apply_permanent_mask()
             I_B.apply_object_mask()
+
+            if check_overlap(I_A.w, I_B.w):
+                I_A_interp += interpolate_image(I_A.w, I_B.w, I_B.image)
+                n_BinA += 1
+
+    hdu = fits.PrimaryHDU(I_A_interp/n_BinA)
+    hdu.writeto(tempfile+obsid_A+scaid_A+'_interp.fits', overwrite=True)
+
 
 
 # for all_scas:
