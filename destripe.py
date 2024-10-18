@@ -1,9 +1,8 @@
 """
 Program to remove correlated noise stripes from Roman ST images.
 KL To do list:
-- Finish the transpose interpolation function
+- ?? Finish the transpose interpolation function
 - Link with config file
-- Loop through SCAs
 - Implement conjugate gradient descent solution
 - Write outputs
 
@@ -15,6 +14,7 @@ from astropy import wcs
 from scipy import ndimage
 import compareutils
 import re
+import datetime
 
 # KL: Placeholders, some of these should be input arguments or in a config or something
 input_dir = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/simple/'
@@ -24,7 +24,7 @@ filter = 'H158'
 model_params = {'constant': 1, 'linear': 2}
 permanent_mask = '/users/PCON0003/cond0007/imcom/coadd-test-fall2022/permanent_mask_220730.fits'
 outfile = '/fs/scratch/PCON0003/klaliotis/destripe/destripe_'+filter+'_out.txt'
-tempfile = '/path/to/tempfiles/'
+tempfile = '/tmp/klaliotis-tmp/'
 s_in  = 0.11
 
 
@@ -90,23 +90,25 @@ class sca_img:
 
 class ds_parameters:
     """
-    Class holding the destriping parameters for a given image.
+    Class holding the destriping parameters for a given mosaic.
     Attributes:
         model: which destriping model to use, which specifies the number of parameters per row based on the
          model_params dict
+        n_rows: number of rows in the image
         params_per_row: number of parameters per row, given by the model
         params: the actual array of parameters.
     Functions:
         params_2_images: reshape params into the 2D array
         flatten_params: reshape params into 1D vector
     """
-    def __init__(self, model):
+    def __init__(self, model, n_rows):
         self.model = model
+        self.n_rows = n_rows
         self.params_per_row = model_params[str(self.model)]
-        self.params = np.zeros((len(all_scas), n_rows*self.params_per_row))
+        self.params = np.zeros((len(all_scas), self.n_rows*self.params_per_row))
 
     def params_2_images(self):
-        self.params = np.reshape(self.params, ((len(all_scas), n_rows*self.params_per_row)))
+        self.params = np.reshape(self.params, ((len(all_scas), self.n_rows*self.params_per_row)))
         return self.params
 
     def flatten_params(self):
@@ -161,7 +163,7 @@ def Cic_interpolate(
 
     return interpolated_image
 
-def get_scas():
+def get_scas(filter, prefix):
     """
     Function to get an array of SCA images for this mosaic
     :param : None
@@ -169,7 +171,7 @@ def get_scas():
     """
     n_scas = 0
     all_scas = []
-    for f in os.listdir(input_dir):
+    for f in os.listdir(input_dir+prefix+filter+'_'):
         n_scas += 1
         m = re.search(r'(\w\d+)_(\d+)_(\d+)', f)
         if m:
@@ -204,7 +206,7 @@ def check_overlap(target_wcs, ref_wcs):
 
 ############################ Main Sequence ############################
 
-all_scas = get_scas()
+all_scas = get_scas(filter, image_prefix)
 
 # In this chunk of code, we iterate through all the SCAs and create interpolated
 # versions of them from all the other SCAs
@@ -237,24 +239,61 @@ for i,sca in enumerate(all_scas):
 
     hdu = fits.PrimaryHDU(I_A_interp/n_BinA)
     hdu.writeto(tempfile+obsid_A+scaid_A+'_interp.fits', overwrite=True)
+    write_to_file(tempfile+obsid_A+scaid_A+'_interp.fits created \n')
+    write_to_file('Remaining SCAs: ' + str(len(all_scas)-i) + '\n')
+    write_to_file(datetime.datetime.now() + '\n')
 
+# # Initiate parameters
+# def destripe(tolerance=1e-10, max_it=100):
+#     params = ds_parameters('constant', 4088)
+#     resid = params.params.copy()
+#     Ad = params.params.copy()
+#
+#     tolerance = tolerance
+#     max_it = max_it
+#
+#     it = 0  # iteration counter
+#     diff = 1.0
+#     tol_hist_jac = []
+#
+#     p = params.params.copy()
 
-
-# for all_scas:
-# initialize sca object instance for first sca, I_A
-    # for next sca in list **with a different obsid**:
-    # initialize sca object instance for I_B
-    # check if I_B overlaps I_A
-    # if yes:
-        # use map sca2sca to map I_B to I_A (making I_B')
-        # initialize J_A
-        # Transpose interpolate I_B' into J_A
-        # KL question: interpolation weight, effective gain??
-        # increment N_interp
-    # save J_A somewhere, potentially temporarily
-    # make a list of all_scas_interp
-
-# initialize parameters instance
-# go through CGD algorithm using all_scas and all_scas_interp lists, optimizing params
+#     # Initial residual r0 and initial search direction d0
+#     resid[1:-1, 1:-1] = -b[1:-1, 1:-1] - A(p, dx, dy)
+#     d = resid.copy()
+#
+#     while (diff > tolerance):
+#         if it > max_it:
+#             print('\nSolution did not converged within the maximum'
+#                   ' number of iterations'
+#                   f'\nLast l2_diff was: {diff:.5e}')
+#             break
+#
+#         # Laplacian of the search direction.
+#         Ad[1:-1, 1:-1] = A(d, dx, dy)
+#         # Magnitude of jump.
+#         alpha = np.sum(r * r) / np.sum(d * Ad)
+#         # Iterated solution
+#         pnew = p + alpha * d
+#         # Intermediate computation
+#         beta_denom = np.sum(r * r)
+#         # Update the residual.
+#         r = r - alpha * Ad
+#         # Compute beta
+#         beta = np.sum(r * r) / beta_denom
+#         # Update the search direction.
+#         d = r + beta * d
+#
+#         diff = l2_diff(pnew, p)
+#         tol_hist_jac.append(diff)
+#
+#         # Get ready for next iteration
+#         it += 1
+#         np.copyto(p, pnew)
+#
+#
+#     else:
+#         print(f'\nThe solution converged after {it} iterations')
+# # go through CGD algorithm using all_scas and all_scas_interp lists, optimizing params
 
 
