@@ -7,19 +7,19 @@ KL To do list:
 - Write outputs
 
 """
-import os
+# import os
+import glob
 import numpy as np
 from astropy.io import fits
 from astropy import wcs
 from scipy import ndimage
 import compareutils
 import re
-import datetime
 
 # KL: Placeholders, some of these should be input arguments or in a config or something
 input_dir = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/simple/'
 image_prefix = 'Roman_WAS_simple_model_'
-labnoise_prefix = 'fs/scratch/PCON0003/cond0007/anl-run-in-prod/labnoise/slope_'
+labnoise_prefix = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/labnoise/slope_'
 filter = 'H158'
 model_params = {'constant': 1, 'linear': 2}
 permanent_mask = '/users/PCON0003/cond0007/imcom/coadd-test-fall2022/permanent_mask_220730.fits'
@@ -59,8 +59,8 @@ class sca_img:
     apply_object_mask: mask out bright objects from the image
     """
     def __init__(self, obsid, scaid):
-        file = fits.open(input_dir+image_prefix+str(obsid)+'_'+str(scaid))
-        self.image = np.copy(file['SCI'].data())
+        file = fits.open(input_dir+image_prefix+filter+'_'+obsid+'_'+scaid+'.fits')
+        self.image = np.copy(file['SCI'].data)
         self.shape = np.shape(self.image)
         self.w = wcs.WCS(file['SCI'].header)
         self.ra_ctr = self.w.wcs.crval[0]
@@ -70,12 +70,12 @@ class sca_img:
         file.close()
 
     def apply_noise(self):
-        noiseframe = np.copy(fits.open(labnoise_prefix+self.obsid+'_'+self.scaid)['PRIMARY'].data)
-        self.image += noiseframe
+        noiseframe = np.copy(fits.open(labnoise_prefix+self.obsid+'_'+self.scaid+'.fits')['PRIMARY'].data)
+        self.image += noiseframe[4:4092,4:4092]
         return self.image
 
     def apply_permanent_mask(self):
-        pm = np.copy(fits.open(permanent_mask)[0].data[self.scaid])
+        pm = np.copy(fits.open(permanent_mask)[0].data[int(self.scaid)-1])
         self.image = self.image * pm
         return self.image
 
@@ -116,52 +116,52 @@ class ds_parameters:
         return self.params
 
 # KL: Adapted from Naim CiC algorithm
-@njit("(f8[:, :], f8[:, :], f8, i8)")
-def Cic_interpolate(
-
-        interpolated_image, imageB_grid, d_xy, n_grid,
-
-):
-    """Reverse interpolate pixels from Image B onto `interpolated_image`,
-    the pixel grid from Image A (plus some padding).
-
-    Arguments
-
-    ---------
-
-    interpolated_image (np.ndarray): 2D grid of shape
-
-        (n_grid+pad, n_grid+pad). This array is updated in place.
-
-    imageB_grid (np.ndarray): 2D array of shape (n_grid, n_grid). needs to have coordinates of pixels in a form
-        that will be useful to compare with image A
-
-    d_xy (float): Grid size in x and y directions (image A pixel spacing (in arcsec?) I think)
-
-    n_grid (int): Number of grid points for x and y directions. =4088
-
-    """
-
-    dis_r = imageB_grid / np.array([d_xy, d_xy])
-
-    idx_r = dis_r.astype(np.int_)
-
-    dis_r -= idx_r
-
-    idx_r %= np.array([n_grid, n_grid], dtype=np.int_)
-
-    for (x, y), (dx, dy) in zip(idx_r, dis_r):
-        # Next grid points (e.g., x + 1).
-
-        interpolated_image[x, y] += (1 - dx) * (1 - dy) # KL: multiply these by image B pixel value??
-
-        interpolated_image[x, yp] += (1 - dx) * dy
-
-        interpolated_image[xp, y] += dx * (1 - dy)
-
-        interpolated_image[xp, yp] += dx * dy
-
-    return interpolated_image
+# @njit("(f8[:, :], f8[:, :], f8, i8)")
+# def Cic_interpolate(
+#
+#         interpolated_image, imageB_grid, d_xy, n_grid,
+#
+# ):
+#     """Reverse interpolate pixels from Image B onto `interpolated_image`,
+#     the pixel grid from Image A (plus some padding).
+#
+#     Arguments
+#
+#     ---------
+#
+#     interpolated_image (np.ndarray): 2D grid of shape
+#
+#         (n_grid+pad, n_grid+pad). This array is updated in place.
+#
+#     imageB_grid (np.ndarray): 2D array of shape (n_grid, n_grid). needs to have coordinates of pixels in a form
+#         that will be useful to compare with image A
+#
+#     d_xy (float): Grid size in x and y directions (image A pixel spacing (in arcsec?) I think)
+#
+#     n_grid (int): Number of grid points for x and y directions. =4088
+#
+#     """
+#
+#     dis_r = imageB_grid / np.array([d_xy, d_xy])
+#
+#     idx_r = dis_r.astype(np.int_)
+#
+#     dis_r -= idx_r
+#
+#     idx_r %= np.array([n_grid, n_grid], dtype=np.int_)
+#
+#     for (x, y), (dx, dy) in zip(idx_r, dis_r):
+#         # Next grid points (e.g., x + 1).
+#
+#         interpolated_image[x, y] += (1 - dx) * (1 - dy) # KL: multiply these by image B pixel value??
+#
+#         interpolated_image[x, yp] += (1 - dx) * dy
+#
+#         interpolated_image[xp, y] += dx * (1 - dy)
+#
+#         interpolated_image[xp, yp] += dx * dy
+#
+#     return interpolated_image
 
 def get_scas(filter, prefix):
     """
@@ -171,7 +171,7 @@ def get_scas(filter, prefix):
     """
     n_scas = 0
     all_scas = []
-    for f in os.listdir(input_dir+prefix+filter+'_'):
+    for f in glob.glob(input_dir+prefix+filter+'_*'):
         n_scas += 1
         m = re.search(r'(\w\d+)_(\d+)_(\d+)', f)
         if m:
@@ -188,8 +188,8 @@ def interpolate_image(target_wcs, ref_wcs, ref_image):
     :param ref_image: the image whose values you want to use
     :return: an image of ref_image interpolated onto target_image grid
     """
-    x_target, y_target, is_in_ref = compareutils.map_sca2sca(target_wcs, ref_wcs, pad=2)
-    interp_image = ndimage.map_coordinates(ref_image, [[x_target], [y_target]])
+    x_target, y_target, is_in_ref = compareutils.map_sca2sca(target_wcs, ref_wcs, pad=0)
+    interp_image = ndimage.map_coordinates(ref_image, [[x_target], [y_target]])[0,:,:]
     return interp_image
 
 def check_overlap(target_wcs, ref_wcs):
@@ -200,13 +200,14 @@ def check_overlap(target_wcs, ref_wcs):
     :return: Bool; whether the two SCAs overlap
     """
     wcs_list = [target_wcs,ref_wcs]
-    ov_mat = compareutils.get_overlap_matrix(wcs_list)
+    ov_mat = compareutils.get_overlap_matrix(wcs_list, verbose=True)
     return np.any(ov_mat[0, 1])
 
 
 ############################ Main Sequence ############################
 
 all_scas = get_scas(filter, image_prefix)
+print(len(all_scas), " SCAs in this mosaic")
 
 # In this chunk of code, we iterate through all the SCAs and create interpolated
 # versions of them from all the other SCAs
@@ -214,6 +215,7 @@ for i,sca in enumerate(all_scas):
     m = re.search(r'_(\d+)_(\d+)', sca)
     obsid_A = m.group(1)
     scaid_A = m.group(2)
+    print('Img A: ' + obsid_A + '_' + scaid_A)
     I_A = sca_img(obsid_A, scaid_A)
     I_A.apply_noise()
     I_A.apply_permanent_mask()
@@ -223,25 +225,25 @@ for i,sca in enumerate(all_scas):
     n_BinA = 0
 
     for sca_b in all_scas:
-        m = re.search(r'_(\d+)_(\d+)', sca)
+        m = re.search(r'_(\d+)_(\d+)', sca_b)
         obsid_B = m.group(1)
         scaid_B = m.group(2)
 
-        if not obsid_B == obsid_A:
+        if obsid_B != obsid_A:
             I_B = sca_img(obsid_B, scaid_B)
             I_B.apply_noise()
             I_B.apply_permanent_mask()
             I_B.apply_object_mask()
 
             if check_overlap(I_A.w, I_B.w):
+                print('Overlap True, Image B: '+obsid_B+'_'+scaid_B)
                 I_A_interp += interpolate_image(I_A.w, I_B.w, I_B.image)
                 n_BinA += 1
 
     hdu = fits.PrimaryHDU(I_A_interp/n_BinA)
-    hdu.writeto(tempfile+obsid_A+scaid_A+'_interp.fits', overwrite=True)
-    write_to_file(tempfile+obsid_A+scaid_A+'_interp.fits created \n')
-    write_to_file('Remaining SCAs: ' + str(len(all_scas)-i) + '\n')
-    write_to_file(datetime.datetime.now() + '\n')
+    hdu.writeto(tempfile+obsid_A+'_'+scaid_A+'_interp.fits', overwrite=True)
+    print(tempfile+obsid_A+'_'+scaid_A+'_interp.fits created \n')
+    print('Remaining SCAs: ' + str(len(all_scas)-1-i) + '\n')
 
 # # Initiate parameters
 # def destripe(tolerance=1e-10, max_it=100):
