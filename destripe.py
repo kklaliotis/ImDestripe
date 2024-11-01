@@ -9,6 +9,7 @@ KL To do list:
 """
 import os
 import glob
+import time
 import ctypes
 import numpy as np
 from astropy.io import fits
@@ -261,8 +262,9 @@ all_scas, all_wcs = get_scas(filter, image_prefix)
 print(len(all_scas), " SCAs in this mosaic")
 print(len(all_wcs), "WCS in the list (if not same as above, we have a problem)")
 
+print('Overlap matrix computing start: ', time.time())
 ov_mat = compareutils.get_overlap_matrix(all_wcs, verbose=True) #an N_wcs x N_wcs matrix containing fractional overlap
-print("Overlap matrix complete")
+print("Overlap matrix complete: ", time.time())
 
 # In this chunk of code, we iterate through all the SCAs and create interpolated
 # versions of them from all the other SCAs that overlap them
@@ -278,8 +280,8 @@ for i,sca_a in enumerate(all_scas):
 
     I_A_interp = np.zeros(I_A.shape)
     N_eff = np.zeros(I_A.shape)
-
-    print('Starting interpolation for SCA A')
+    t_a_start = time.time()
+    print('Starting interpolation for SCA A: ', t_a_start)
     sys.stdout.flush()
 
     for j,sca_b in enumerate(all_scas):
@@ -300,6 +302,8 @@ for i,sca_a in enumerate(all_scas):
     hdu = fits.PrimaryHDU(np.divide(I_A_interp, N_eff))
     hdu.writeto(tempfile+filter+'/'+obsid_A+'_'+scaid_A+'_interp.fits', overwrite=True)
     print(tempfile+filter+'/'+obsid_A+'_'+scaid_A+'_interp.fits created \n')
+    t_elapsed_a = time.time() - t_a_start
+    print('Time to generate this SCA: ', t_elapsed_a)
     print('Remaining SCAs: ' + str(len(all_scas)-1-i) + '\n')
 
 
