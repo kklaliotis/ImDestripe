@@ -7,8 +7,9 @@ KL To do list:
 - Write outputs
 
 """
-# import os
+import os
 import glob
+import ctypes
 import numpy as np
 from astropy.io import fits
 from astropy import wcs
@@ -16,6 +17,7 @@ from scipy import ndimage
 import compareutils
 import re
 import sys
+import pyimcom_croutines
 
 # KL: Placeholders, some of these should be input arguments or in a config or something
 input_dir = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/simple/'
@@ -51,10 +53,11 @@ class sca_img:
         obsid: the observation id (str)
         ra_ctr: RA coordinate of the SCA image center
         dec_ctr: dec coordinate of the SCA image center
-        image: the SCA image (4088x4088) (KL: np array or pd dataframe?_
+        image: the SCA image (4088x4088)
         shape: shape of the image
         wcs: the astropy.wcs object associated with this SCA
         mask: the full pixel mask that is used on this image. Is correct only after running both apply mask methods
+        g_eff: the effective gain of each pixel in the image
     Functions:
     apply_noise: apply the appropriate lab noise frame to the SCA image
     get_overlap: figure out which other SCA images overlap this one
@@ -68,10 +71,12 @@ class sca_img:
         self.w = wcs.WCS(file['SCI'].header)
         self.ra_ctr = self.w.wcs.crval[0]
         self.dec_ctr = self.w.wcs.crval[1]
+        file.close()
+
         self.obsid = obsid
         self.scaid = scaid
-        file.close()
         self.mask = np.ones(self.shape)
+        # self.g_eff = t_exp*Omega*A_eff
 
     def apply_noise(self):
         noiseframe = np.copy(fits.open(labnoise_prefix+self.obsid+'_'+self.scaid+'.fits')['PRIMARY'].data)
@@ -92,6 +97,17 @@ class sca_img:
                     self.image[i-2:i+2,j-2:j+2]=0
                     self.mask[i - 2:i + 2, j - 2:j + 2] = 0
         return self.image
+
+    def get_coordinates(self):
+        wcs = self.w
+        h = self.shape[0]
+        w = self.shape[1]
+        x_i, y_i = np.meshgrid(np.arange(h), np.arange(w))
+        x_flat= x_i.flatten()
+        y_flat = y_i.flatten()
+        ra, dec = wcs.all_pix2world(x_flat, y_flat, 0)  # 0 is for the first frame (1-indexed)
+        coords = np.column_stack((ra, dec))
+        return coords
 
 
 class ds_parameters:
@@ -158,14 +174,17 @@ class ds_parameters:
 #
 #     for (x, y), (dx, dy) in zip(idx_r, dis_r):
 #         # Next grid points (e.g., x + 1).
+#         xp = x+1
+#         yp = y+1
 #
-#         interpolated_image[x, y] += (1 - dx) * (1 - dy) # KL: multiply these by image B pixel value??
-#
-#         interpolated_image[x, yp] += (1 - dx) * dy
-#
-#         interpolated_image[xp, y] += dx * (1 - dy)
-#
-#         interpolated_image[xp, yp] += dx * dy
+#         if 0 <= x < n_grid and 0 <= y < n_grid:
+#             interpolated_image[x, y] += (1 - dx) * (1 - dy) * imageB_grid[i,j]
+#         if 0 <= x < n_grid and 0 <= yp < n_grid:
+#             interpolated_image[x, yp] += (1 - dx) * dy * imageB_grid[i,j]
+#         if 0 <= xp < n_grid and 0 <= y < n_grid:
+#             interpolated_image[xp, y] += dx * (1 - dy) * imageB_grid[i,j]
+#         if 0 <= xp < n_grid and 0 <= yp < n_grid:
+#             interpolated_image[xp, yp] += dx * dy * imageB_grid[i,j]
 #
 #     return interpolated_image
 
@@ -191,18 +210,49 @@ def get_scas(filter, prefix):
     write_to_file('N SCA images in this mosaic: ' + str(n_scas))
     return all_scas, all_wcs
 
-def interpolate_image(target_wcs, ref_wcs, ref_image):
+# def interpolate_image_scipy(target_wcs, ref_wcs, ref_image):
+#     """
+#     Interpolate values from a "reference" SCA image onto a "target" SCA coordinate grid
+#     Uses Scipy.ndimage.map_coordinates. This is faster but doesn't output weights
+#     :param target_wcs: WCS of the image whose grid you want to interpolate onto
+#     :param ref_wcs: WCS of the image whose values you want to use
+#     :param ref_image: the image whose values you want to use
+#     :return: an image of ref_image interpolated onto target_image grid
+#     """
+#     x_target, y_target, is_in_ref = compareutils.map_sca2sca(target_wcs, ref_wcs, pad=0)
+#     interp_image = ndimage.map_coordinates(ref_image, [[x_target], [y_target]], order=1)[0,:,:]
+#     return interp_image
+
+def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
     """
     Interpolate values from a "reference" SCA image onto a "target" SCA coordinate grid
-    :param target_wcs: WCS of the image whose grid you want to interpolate onto
-    :param ref_wcs: WCS of the image whose values you want to use
-    :param ref_image: the image whose values you want to use
-    :return: an image of ref_image interpolated onto target_image grid
+    Uses pyimcom_croutines.bilinear_interpolation(float* image, int rows, int cols, float* coords,
+                                                    int num_coords, float* interpolated_image)
+    :param image_B : an SCA object of the image to be interpolated
+    :param image_A : an SCA object of the image whose grid you are interpolating B onto
+    :param interpolated_image_B : an ndarray of zeros with shape of Image A.
+    interpolated_image_B is updated in-place.
     """
-    x_target, y_target, is_in_ref = compareutils.map_sca2sca(target_wcs, ref_wcs, pad=0)
-    interp_image = ndimage.map_coordinates(ref_image, [[x_target], [y_target]])[0,:,:]
-    return interp_image
+    x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_A.w, image_B.w, pad=0)
+    coords = np.column_stack((x_target, y_target)).flatten()
+    pyimcom_croutines.bilinear_interpolation(image_B.image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                                                     image_B.shape[0], image_B.shape[1],
+                                                     coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                                                     coords.shape[0],
+                                                     interpolated_image_B.ctypes.data_as(ctypes.POINTER(ctypes.c_float)))
 
+#
+# def transpose_interpolate(image_B, image_A, interpolated_image_B):
+#     """
+#     bilinear_transpose(float* image, int rows, int cols, float* coords, int num_coords, float* original_image)
+#     :return:
+#     """
+#     pyimcom_croutines.bilinear_transpose(image_B.image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+#                                                           image_B.shape[0], image_B.shape[1],
+#                                                           coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+#                                                           coords.shape[0],
+#                                                           interpolated_image_B.ctypes.data_as(
+#                                                               ctypes.POINTER(ctypes.c_float)))
 
 
 ############################ Main Sequence ############################
@@ -213,6 +263,7 @@ print(len(all_wcs), "WCS in the list (if not same as above, we have a problem)")
 
 ov_mat = compareutils.get_overlap_matrix(all_wcs, verbose=True) #an N_wcs x N_wcs matrix containing fractional overlap
 print("Overlap matrix complete")
+
 # In this chunk of code, we iterate through all the SCAs and create interpolated
 # versions of them from all the other SCAs that overlap them
 for i,sca_a in enumerate(all_scas):
@@ -241,13 +292,16 @@ for i,sca_a in enumerate(all_scas):
             I_B.apply_noise()
             I_B.apply_permanent_mask()
             I_B.apply_object_mask()
-            I_A_interp += interpolate_image(I_A.w, I_B.w, I_B.image)
+            interpolated_image = np.zeros_like(I_A.image)
+            interpolate_image_bilinear(I_B, I_A, interpolated_image)
+            I_A_interp += interpolated_image
             N_eff += I_B.mask
 
     hdu = fits.PrimaryHDU(np.divide(I_A_interp, N_eff))
     hdu.writeto(tempfile+filter+'/'+obsid_A+'_'+scaid_A+'_interp.fits', overwrite=True)
     print(tempfile+filter+'/'+obsid_A+'_'+scaid_A+'_interp.fits created \n')
     print('Remaining SCAs: ' + str(len(all_scas)-1-i) + '\n')
+
 
 
 
