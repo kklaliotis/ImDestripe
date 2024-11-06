@@ -138,56 +138,6 @@ class ds_parameters:
         self.params = np.ravel(self.params)
         return self.params
 
-# KL: Adapted from Naim CiC algorithm
-# @njit("(f8[:, :], f8[:, :], f8, i8)")
-# def Cic_interpolate(
-#
-#         interpolated_image, imageB_grid, d_xy, n_grid,
-#
-# ):
-#     """Reverse interpolate pixels from Image B onto `interpolated_image`,
-#     the pixel grid from Image A (plus some padding).
-#
-#     Arguments
-#
-#     ---------
-#
-#     interpolated_image (np.ndarray): 2D grid of shape
-#
-#         (n_grid+pad, n_grid+pad). This array is updated in place.
-#
-#     imageB_grid (np.ndarray): 2D array of shape (n_grid, n_grid). needs to have coordinates of pixels in a form
-#         that will be useful to compare with image A
-#
-#     d_xy (float): Grid size in x and y directions (image A pixel spacing (in arcsec?) I think)
-#
-#     n_grid (int): Number of grid points for x and y directions. =4088
-#
-#     """
-#
-#     dis_r = imageB_grid / np.array([d_xy, d_xy])
-#
-#     idx_r = dis_r.astype(np.int_)
-#
-#     dis_r -= idx_r
-#
-#     idx_r %= np.array([n_grid, n_grid], dtype=np.int_)
-#
-#     for (x, y), (dx, dy) in zip(idx_r, dis_r):
-#         # Next grid points (e.g., x + 1).
-#         xp = x+1
-#         yp = y+1
-#
-#         if 0 <= x < n_grid and 0 <= y < n_grid:
-#             interpolated_image[x, y] += (1 - dx) * (1 - dy) * imageB_grid[i,j]
-#         if 0 <= x < n_grid and 0 <= yp < n_grid:
-#             interpolated_image[x, yp] += (1 - dx) * dy * imageB_grid[i,j]
-#         if 0 <= xp < n_grid and 0 <= y < n_grid:
-#             interpolated_image[xp, y] += dx * (1 - dy) * imageB_grid[i,j]
-#         if 0 <= xp < n_grid and 0 <= yp < n_grid:
-#             interpolated_image[xp, yp] += dx * dy * imageB_grid[i,j]
-#
-#     return interpolated_image
 
 def get_scas(filter, prefix):
     """
@@ -210,19 +160,6 @@ def get_scas(filter, prefix):
             this_file.close()
     write_to_file('N SCA images in this mosaic: ' + str(n_scas))
     return all_scas, all_wcs
-
-# def interpolate_image_scipy(target_wcs, ref_wcs, ref_image):
-#     """
-#     Interpolate values from a "reference" SCA image onto a "target" SCA coordinate grid
-#     Uses Scipy.ndimage.map_coordinates. This is faster but doesn't output weights
-#     :param target_wcs: WCS of the image whose grid you want to interpolate onto
-#     :param ref_wcs: WCS of the image whose values you want to use
-#     :param ref_image: the image whose values you want to use
-#     :return: an image of ref_image interpolated onto target_image grid
-#     """
-#     x_target, y_target, is_in_ref = compareutils.map_sca2sca(target_wcs, ref_wcs, pad=0)
-#     interp_image = ndimage.map_coordinates(ref_image, [[x_target], [y_target]], order=1)[0,:,:]
-#     return interp_image
 
 def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
     """
