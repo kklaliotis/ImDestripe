@@ -15,7 +15,7 @@ import numpy as np
 from astropy.io import fits
 from astropy import wcs
 from scipy import ndimage
-import compareutils
+from utils import compareutils
 import re
 import sys
 import pyimcom_croutines
@@ -27,10 +27,12 @@ labnoise_prefix = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/labnoise/slope_
 filter = 'H158'
 model_params = {'constant': 1, 'linear': 2}
 permanent_mask = '/users/PCON0003/cond0007/imcom/coadd-test-fall2022/permanent_mask_220730.fits'
-outfile = '/fs/scratch/PCON0003/klaliotis/destripe/destripe_'+filter+'_out.txt'
-tempfile = '/fs/scratch/PCON0003/klaliotis/destripe/' #temporary temp file so that i can check these things
-#tempfile = '/tmp/klaliotis-tmp/'
-s_in  = 0.11
+outfile = '/fs/scratch/PCON0003/klaliotis/destripe/destripe_' + filter + '_out.txt'
+tempfile = '/fs/scratch/PCON0003/klaliotis/destripe/'  # temporary temp file so that i can check these things
+# tempfile = '/tmp/klaliotis-tmp/'
+s_in = 0.11  # arcsec^2
+t_exp = 154  # sec
+A_eff = 7340  # cm ^2
 
 
 def write_to_file(text):
@@ -40,7 +42,7 @@ def write_to_file(text):
     :return: nothing
     """
     global outfile
-    with open(outfile,"w") as f:
+    with open(outfile, "w") as f:
         f.write(text + '\n')
     with open(outfile, "r") as f:
         print(f.readlines())
@@ -57,16 +59,20 @@ class sca_img:
         image: the SCA image (4088x4088)
         shape: shape of the image
         wcs: the astropy.wcs object associated with this SCA
-        mask: the full pixel mask that is used on this image. Is correct only after running both apply mask methods
-        g_eff: the effective gain of each pixel in the image
+        mask: the full pixel mask that is used on this image. Is correct only after running BOTH apply mask methods
     Functions:
     apply_noise: apply the appropriate lab noise frame to the SCA image
-    get_overlap: figure out which other SCA images overlap this one
     apply_permanent_mask: apply the SCA permanent pixel mask to the image
     apply_object_mask: mask out bright objects from the image
+    get_coordinates:
+    effective_gain:
     """
-    def __init__(self, obsid, scaid):
-        file = fits.open(input_dir+image_prefix+filter+'_'+obsid+'_'+scaid+'.fits')
+
+    def __init__(self, obsid, scaid, interp=False):
+        if interp:
+            file = fits.open(tempfile + filter + '/' + obsid + '_' + scaid + '_interp.fits')
+        else:
+            file = fits.open(input_dir + image_prefix + filter + '_' + obsid + '_' + scaid + '.fits')
         self.image = np.copy(file['SCI'].data)
         self.shape = np.shape(self.image)
         self.w = wcs.WCS(file['SCI'].header)
@@ -77,15 +83,14 @@ class sca_img:
         self.obsid = obsid
         self.scaid = scaid
         self.mask = np.ones(self.shape)
-        # self.g_eff = t_exp*Omega*A_eff
 
     def apply_noise(self):
-        noiseframe = np.copy(fits.open(labnoise_prefix+self.obsid+'_'+self.scaid+'.fits')['PRIMARY'].data)
-        self.image += noiseframe[4:4092,4:4092]
+        noiseframe = np.copy(fits.open(labnoise_prefix + self.obsid + '_' + self.scaid + '.fits')['PRIMARY'].data)
+        self.image += noiseframe[4:4092, 4:4092]
         return self.image
 
     def apply_permanent_mask(self):
-        pm = np.copy(fits.open(permanent_mask)[0].data[int(self.scaid)-1])
+        pm = np.copy(fits.open(permanent_mask)[0].data[int(self.scaid) - 1])
         self.image = self.image * pm
         self.mask = self.mask * pm
         return self.image
@@ -94,8 +99,8 @@ class sca_img:
         median = np.median(self.image)
         for i in range(self.shape[0]):
             for j in range(self.shape[1]):
-                if self.image[i,j]>=1.5*median:
-                    self.image[i-2:i+2,j-2:j+2]=0
+                if self.image[i, j] >= 1.5 * median:
+                    self.image[i - 2:i + 2, j - 2:j + 2] = 0
                     self.mask[i - 2:i + 2, j - 2:j + 2] = 0
         return self.image
 
@@ -104,11 +109,20 @@ class sca_img:
         h = self.shape[0]
         w = self.shape[1]
         x_i, y_i = np.meshgrid(np.arange(h), np.arange(w))
-        x_flat= x_i.flatten()
+        x_flat = x_i.flatten()
         y_flat = y_i.flatten()
         ra, dec = wcs.all_pix2world(x_flat, y_flat, 0)  # 0 is for the first frame (1-indexed)
         coords = np.column_stack((ra, dec))
         return coords
+
+    def effective_gain(self):
+        derivative_matrix = wcs.utils.local_partial_pixel_derivatives(self.w)
+        det = np.linalg.det(derivative_matrix)
+        naxis1, naxis2 = self.shape
+        x, y = np.meshgrid(np.arange(naxis1), np.arange(naxis2))
+        sky_coords = wcs.pixel_to_world(x, y)
+        declination_matrix = sky_coords.dec.value
+        return det * declination_matrix
 
 
 class ds_parameters:
@@ -123,15 +137,18 @@ class ds_parameters:
     Functions:
         params_2_images: reshape params into the 2D array
         flatten_params: reshape params into 1D vector
+    To do:
+        add option for additional parameters
     """
+
     def __init__(self, model, n_rows):
         self.model = model
         self.n_rows = n_rows
         self.params_per_row = model_params[str(self.model)]
-        self.params = np.zeros((len(all_scas), self.n_rows*self.params_per_row))
+        self.params = np.zeros((len(all_scas), self.n_rows * self.params_per_row))
 
     def params_2_images(self):
-        self.params = np.reshape(self.params, ((len(all_scas), self.n_rows*self.params_per_row)))
+        self.params = np.reshape(self.params, ((len(all_scas), self.n_rows * self.params_per_row)))
         return self.params
 
     def flatten_params(self):
@@ -148,7 +165,7 @@ def get_scas(filter, prefix):
     n_scas = 0
     all_scas = []
     all_wcs = []
-    for f in glob.glob(input_dir+prefix+filter+'_*'):
+    for f in glob.glob(input_dir + prefix + filter + '_*'):
         n_scas += 1
         m = re.search(r'(\w\d+)_(\d+)_(\d+)', f)
         if m:
@@ -164,7 +181,7 @@ def get_scas(filter, prefix):
 def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
     """
     Interpolate values from a "reference" SCA image onto a "target" SCA coordinate grid
-    Uses pyimcom_croutines.bilinear_interpolation(float* image, int rows, int cols, float* coords,
+    Uses pyimcom_croutines.bilinear_interpolation(float* image, float* g_eff, int rows, int cols, float* coords,
                                                     int num_coords, float* interpolated_image)
     :param image_B : an SCA object of the image to be interpolated
     :param image_A : an SCA object of the image whose grid you are interpolating B onto
@@ -174,23 +191,30 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
     x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_A.w, image_B.w, pad=0)
     coords = np.column_stack((x_target, y_target)).flatten()
     pyimcom_croutines.bilinear_interpolation(image_B.image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                                                     image_B.shape[0], image_B.shape[1],
-                                                     coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                                                     coords.shape[0],
-                                                     interpolated_image_B.ctypes.data_as(ctypes.POINTER(ctypes.c_float)))
+                                             image_B.effective_gain().ctypes.data_as(
+                                                 ctypes.POINTER(ctypes.c_float)),
+                                             image_B.shape[0], image_B.shape[1],
+                                             coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                                             coords.shape[0],
+                                             interpolated_image_B.ctypes.data_as(ctypes.POINTER(ctypes.c_float)))
 
-#
-# def transpose_interpolate(image_B, image_A, interpolated_image_B):
-#     """
-#     bilinear_transpose(float* image, int rows, int cols, float* coords, int num_coords, float* original_image)
-#     :return:
-#     """
-#     pyimcom_croutines.bilinear_transpose(image_B.image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-#                                                           image_B.shape[0], image_B.shape[1],
-#                                                           coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-#                                                           coords.shape[0],
-#                                                           interpolated_image_B.ctypes.data_as(
-#                                                               ctypes.POINTER(ctypes.c_float)))
+
+ def transpose_interpolate(image_B, image_A, interpolated_image_B):
+     """
+     Interpolate backwardsfrom image_A_interp back onto image_B ?
+     bilinear_transpose(float* image, int rows, int cols, float* coords, int num_coords, float* original_image)
+     :return:
+     """
+     x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_A.w, image_B.w, pad=0)
+     coords = np.column_stack((x_target, y_target)).flatten()
+     pyimcom_croutines.bilinear_transpose(image_B.image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                                            image_B.effective_gain().ctypes.data_as(
+                                                 ctypes.POINTER(ctypes.c_float)),
+                                            image_B.shape[0], image_B.shape[1],
+                                            coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                                            coords.shape[0],
+                                            interpolated_image_B.ctypes.data_as(
+                                                               ctypes.POINTER(ctypes.c_float)))
 
 
 ############################ Main Sequence ############################
@@ -200,50 +224,166 @@ print(len(all_scas), " SCAs in this mosaic")
 print(len(all_wcs), "WCS in the list (if not same as above, we have a problem)")
 
 print('Overlap matrix computing start: ', time.time())
-ov_mat = compareutils.get_overlap_matrix(all_wcs, verbose=True) #an N_wcs x N_wcs matrix containing fractional overlap
+ov_mat = compareutils.get_overlap_matrix(all_wcs, verbose=True)  # an N_wcs x N_wcs matrix containing fractional overlap
 print("Overlap matrix complete: ", time.time())
 
 # In this chunk of code, we iterate through all the SCAs and create interpolated
 # versions of them from all the other SCAs that overlap them
-for i,sca_a in enumerate(all_scas):
-    m = re.search(r'_(\d+)_(\d+)', sca_a)
-    obsid_A = m.group(1)
-    scaid_A = m.group(2)
-    print('Img A: ' + obsid_A + '_' + scaid_A)
-    I_A = sca_img(obsid_A, scaid_A)
-    I_A.apply_noise()
-    I_A.apply_permanent_mask()
-    I_A.apply_permanent_mask()
 
-    I_A_interp = np.zeros(I_A.shape)
-    N_eff = np.zeros(I_A.shape)
-    t_a_start = time.time()
-    print('Starting interpolation for SCA A: ', t_a_start)
-    sys.stdout.flush()
+def make_interpolated_images():
+    for i, sca_a in enumerate(all_scas):
+        m = re.search(r'_(\d+)_(\d+)', sca_a)
+        obsid_A = m.group(1)
+        scaid_A = m.group(2)
+        print('Img A: ' + obsid_A + '_' + scaid_A)
+        I_A = sca_img(obsid_A, scaid_A)
+        I_A.apply_noise()
+        I_A.apply_permanent_mask()
+        I_A.apply_object_mask()
 
-    for j,sca_b in enumerate(all_scas):
-        m = re.search(r'_(\d+)_(\d+)', sca_b)
-        obsid_B = m.group(1)
-        scaid_B = m.group(2)
+        I_A_interp = np.zeros(I_A.shape)
+        N_eff = np.zeros(I_A.shape)
+        t_a_start = time.time()
+        print('Starting interpolation for SCA A: ', t_a_start)
+        sys.stdout.flush()
 
-        if obsid_B != obsid_A and ov_mat[i,j] != 0:
-            I_B = sca_img(obsid_B, scaid_B)
-            I_B.apply_noise()
-            I_B.apply_permanent_mask()
-            I_B.apply_object_mask()
-            interpolated_image = np.zeros_like(I_A.image)
-            interpolate_image_bilinear(I_B, I_A, interpolated_image)
-            I_A_interp += interpolated_image
-            N_eff += I_B.mask
+        for j, sca_b in enumerate(all_scas):
+            m = re.search(r'_(\d+)_(\d+)', sca_b)
+            obsid_B = m.group(1)
+            scaid_B = m.group(2)
 
-    hdu = fits.PrimaryHDU(np.divide(I_A_interp, N_eff))
-    hdu.writeto(tempfile+filter+'/'+obsid_A+'_'+scaid_A+'_interp.fits', overwrite=True)
-    print(tempfile+filter+'/'+obsid_A+'_'+scaid_A+'_interp.fits created \n')
-    t_elapsed_a = time.time() - t_a_start
-    print('Time to generate this SCA: ', t_elapsed_a)
-    print('Remaining SCAs: ' + str(len(all_scas)-1-i) + '\n')
+            if obsid_B != obsid_A and ov_mat[i, j] != 0: # Check if this sca_b overlaps sca_a
+                I_B = sca_img(obsid_B, scaid_B)
+                I_B.apply_noise()
+                I_B.apply_permanent_mask()
+                I_B.apply_object_mask()
+                interpolated_image = np.zeros_like(I_A.image)
+                interpolate_image_bilinear(I_B, I_A, interpolated_image)
+                I_A_interp += interpolated_image
+                N_eff += I_B.mask
+
+        hdu = fits.PrimaryHDU(np.divide(np.divide(I_A_interp, N_eff)), I_A.effective_gain())
+        hdu.writeto(tempfile + filter + '/' + obsid_A + '_' + scaid_A + '_interp.fits', overwrite=True)
+        print(tempfile + filter + '/' + obsid_A + '_' + scaid_A + '_interp.fits created \n')
+        t_elapsed_a = time.time() - t_a_start
+        print('Time to generate this SCA: ', t_elapsed_a)
+        print('Remaining SCAs: ' + str(len(all_scas) - 1 - i) + '\n')
 
 
+# Function options. KL: Could move these to another .py file and call them as modules?
+# import functions and then function.quadratic etc.
+# Each of these will have the input x be a 2D array of a sca image.
+
+def quadratic(x):
+    return x**2
+def absolute_value(x):
+    return np.abs(x)
+def quadratic_loss(x, x0, b):
+    if (x-x0)<=b:
+        return quadratic(x-x0)
+    else:
+        return absolute_value(x-x0)
+
+# Derivatives
+def quad_prime(x):
+    return 2*x
+def absval_prime(x):
+    return np.sign(x)
+def quadloss_prime(x, x0):
+    if (x-x0)<=b:
+        return quad_prime(x-x0)
+    else:
+        return absval_prime(x-x0)
+
+function_dictionary = {"quad": quadratic, "abs": absolute_value, "quadloss": quadratic_loss}
+
+# Optimization Scheme
+
+# Initialize parameters
+p = ds_parameters
+
+def cost_function(p, f):
+    """
+    p: params vector; shape is n_rows * n_scas * n_params_per_row.
+        p should be a ds_params object
+    f: keyword for function dictionary options; should also set an f_prime
+    """
+    psi = np.zeros((len(all_scas), 4088, 4088))
+    epsilon = np.copy(psi)
+
+    for i, sca_a in enumerate(all_scas):
+        m = re.search(r'_(\d+)_(\d+)', sca_a)
+        obsid_A = m.group(1)
+        scaid_A = m.group(2)
+        I_A = sca_img(obsid_A, scaid_A)
+        I_A.apply_noise()
+        I_A.apply_permanent_mask()
+        I_A.apply_object_mask()
+
+        #params_A =  p.params[p.n_rows * i : p.n_rows * (i+1) -1]
+        params_A = p.params[i,:]
+        params_A_mat = np.array(params_A)[:, np.newaxis] * np.ones(I_A.shape)
+
+        I_current = I_A.image -  params_A_mat
+
+        if i == 0:
+            make_interpolated_images()
+        J_current = sca_img(obsid_A, scaid_A, interp=True) # I am worried about if the interp images need a WCS object
+#        W[A] = J_current[A].weights  # I think all the weights are dealt with now
+        psi[i] = I_current - J_current
+        epsilon[i] = f(psi[i])
+    return epsilon, psi #, W
 
 
+def residual_function(psi, f_prime):
+    resids = np.zeros((len(all_scas), 4088, 4088))
+    for i, sca_a in enumerate(all_scas):
+        psi[i]
+        delta =
+    return f_prime(psi) * (-delta - W)
 
+
+def linear_search(p, direction, f):
+    alpha = 0.1  # Step size
+    best_p = p + alpha * direction
+    best_epsilon, best_psi= cost_function(best_p, f)
+
+    # Simple linear search
+    for i in range(1, 11):
+        new_p = p + i * alpha * direction
+        new_epsilon, new_psi = cost_function(new_p, f)
+        if new_epsilon < best_epsilon:
+            best_p = new_p
+            best_epsilon = new_epsilon
+            best_psi = new_psi
+    return best_p, best_psi
+
+
+# Conjugate Gradient Descent
+def conjugate_gradient(p0, tol=1e-5, max_iter=100, f):
+    """
+    :param p0: p0 is a ds_parameters object
+    :param tol:
+    :param max_iter:
+    :param f: function to use for cost function
+    :return:
+    """
+    direction = np.copy(p0.params)
+    grad_prev = np.copy(p0.params)
+    psi = cost_function(p0, f)[1]
+
+    for _ in range(max_iter):
+        grad = residual_function(psi, f_prime)
+        if np.linalg.norm(grad) < tol:
+            break
+
+        beta = np.square(grad) / np.square(grad_prev)
+        direction = -grad + beta * direction
+
+        # Perform linear search
+        p_new, psi_new= linear_search(p, direction, f)
+        p = p_new
+        psi = psi_new
+        grad_prev = grad
+
+    return p
