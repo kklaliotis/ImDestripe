@@ -1,11 +1,9 @@
 """
 Program to remove correlated noise stripes from Roman ST images.
 KL To do list:
-- ?? Finish the transpose interpolation function
 - Link with config file
 - Implement conjugate gradient descent solution
-- Write outputs
-
+- Write outputs to file instead of print
 """
 import os
 import glob
@@ -51,15 +49,16 @@ def write_to_file(text):
 class sca_img:
     """
     Class defining an SCA image object.
-    Attributes:
+    Arguments:
         scaid: the SCA id (str)
         obsid: the observation id (str)
-        ra_ctr: RA coordinate of the SCA image center
-        dec_ctr: dec coordinate of the SCA image center
+        interpolated: True if you want the interpolated version of this SCA and not the original. Default:False
+    Attributes:
         image: the SCA image (4088x4088)
         shape: shape of the image
         wcs: the astropy.wcs object associated with this SCA
         mask: the full pixel mask that is used on this image. Is correct only after running BOTH apply mask methods
+        g_eff : effective gain in each pixel of the image
     Functions:
     apply_noise: apply the appropriate lab noise frame to the SCA image
     apply_permanent_mask: apply the SCA permanent pixel mask to the image
@@ -68,21 +67,29 @@ class sca_img:
     effective_gain:
     """
 
-    def __init__(self, obsid, scaid, interp=False):
-        if interp:
+    def __init__(self, obsid, scaid, interpolated=False):
+        if interpolated:
             file = fits.open(tempfile + filter + '/' + obsid + '_' + scaid + '_interp.fits')
         else:
             file = fits.open(input_dir + image_prefix + filter + '_' + obsid + '_' + scaid + '.fits')
         self.image = np.copy(file['SCI'].data)
         self.shape = np.shape(self.image)
         self.w = wcs.WCS(file['SCI'].header)
-        self.ra_ctr = self.w.wcs.crval[0]
-        self.dec_ctr = self.w.wcs.crval[1]
         file.close()
 
         self.obsid = obsid
         self.scaid = scaid
         self.mask = np.ones(self.shape)
+
+        # Calculate effecive gain
+        self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float16', mode='w+', shape=self.shape)
+        for i in range(self.shape[0]):
+            for j in range(self.shape[1]):
+                derivative_matrix = wcs.utils.local_partial_pixel_derivatives(self.w, self.image[i,j])
+                det = np.linalg.det(derivative_matrix)
+                dec = self.w.pixel_to_world(i,j).dec.value
+                self.g_eff[i,j] = det * np.cos(np.deg2rad(dec))
+
 
     def apply_noise(self):
         noiseframe = np.copy(fits.open(labnoise_prefix + self.obsid + '_' + self.scaid + '.fits')['PRIMARY'].data)
@@ -115,19 +122,11 @@ class sca_img:
         coords = np.column_stack((ra, dec))
         return coords
 
-    def effective_gain(self):
-        derivative_matrix = wcs.utils.local_partial_pixel_derivatives(self.w)
-        det = np.linalg.det(derivative_matrix)
-        naxis1, naxis2 = self.shape
-        x, y = np.meshgrid(np.arange(naxis1), np.arange(naxis2))
-        sky_coords = wcs.pixel_to_world(x, y)
-        declination_matrix = sky_coords.dec.value
-        return det * declination_matrix
 
-
-class ds_parameters:
+class parameters:
     """
-    Class holding the destriping parameters for a given mosaic.
+    Class holding the parameters for a given mosaic. This can be the destriping parameters, or a slew of other
+    parameters that need to be the same shape and have the same abilities...
     Attributes:
         model: which destriping model to use, which specifies the number of parameters per row based on the
          model_params dict
@@ -146,14 +145,25 @@ class ds_parameters:
         self.n_rows = n_rows
         self.params_per_row = model_params[str(self.model)]
         self.params = np.zeros((len(all_scas), self.n_rows * self.params_per_row))
+        self.current_shape = '2D'
 
     def params_2_images(self):
         self.params = np.reshape(self.params, ((len(all_scas), self.n_rows * self.params_per_row)))
-        return self.params
+        self.current_shape = '2D'
 
     def flatten_params(self):
         self.params = np.ravel(self.params)
-        return self.params
+        self.current_shape = '1D'
+
+    def forward_par(self, sca_A):
+        """
+        Takes one SCA row (n_rows) from the params and casts it into 2D (n_rows x n_rows)
+        :param sca_A: index of which SCA
+        :return:
+        """
+        if not self.current_shape == '2D':
+            self.params_2_images()
+        return np.array(self.params[sca_A, :])[:, np.newaxis] * np.ones((self.n_rows, self.n_rows))
 
 
 def get_scas(filter, prefix):
@@ -191,7 +201,7 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
     x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_A.w, image_B.w, pad=0)
     coords = np.column_stack((x_target, y_target)).flatten()
     pyimcom_croutines.bilinear_interpolation(image_B.image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                                             image_B.effective_gain().ctypes.data_as(
+                                             image_B.g_eff.ctypes.data_as(
                                                  ctypes.POINTER(ctypes.c_float)),
                                              image_B.shape[0], image_B.shape[1],
                                              coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
@@ -201,14 +211,14 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
 
  def transpose_interpolate(image_B, image_A, interpolated_image_B):
      """
-     Interpolate backwardsfrom image_A_interp back onto image_B ?
+     Interpolate backwards from image_A to image B space
      bilinear_transpose(float* image, int rows, int cols, float* coords, int num_coords, float* original_image)
      :return:
      """
      x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_A.w, image_B.w, pad=0)
      coords = np.column_stack((x_target, y_target)).flatten()
      pyimcom_croutines.bilinear_transpose(image_B.image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                                            image_B.effective_gain().ctypes.data_as(
+                                            image_B.g_eff.ctypes.data_as(
                                                  ctypes.POINTER(ctypes.c_float)),
                                             image_B.shape[0], image_B.shape[1],
                                             coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
@@ -217,15 +227,36 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
                                                                ctypes.POINTER(ctypes.c_float)))
 
 
+def transpose_par(array):
+    return np.sum(array, axis=1)
+
+def get_effective_gain(sca):
+    m = re.search(r'_(\d+)_(\d+)', sca)
+    obsid = m.group(1)
+    scaid = m.group(2)
+    g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float16', mode='r', shape=(4088,4088) )
+    N_eff = np.memmap(tempfile + obsid_A + '_' + scaid_A + '_Neff.dat', dtype='float16', mode='w+', shape=I_A.shape)
+    return g_eff, N_eff
+
+def get_ids(sca):
+    m = re.search(r'_(\d+)_(\d+)', sca)
+    obsid = m.group(1)
+    scaid = m.group(2)
+    return obsid, scaid
+
 ############################ Main Sequence ############################
 
 all_scas, all_wcs = get_scas(filter, image_prefix)
 print(len(all_scas), " SCAs in this mosaic")
 print(len(all_wcs), "WCS in the list (if not same as above, we have a problem)")
 
-print('Overlap matrix computing start: ', time.time())
+ovmat_t0 = time.time()
+print('Overlap matrix computing start')
 ov_mat = compareutils.get_overlap_matrix(all_wcs, verbose=True)  # an N_wcs x N_wcs matrix containing fractional overlap
-print("Overlap matrix complete: ", time.time())
+print("Overlap matrix complete. Duration: ", (ovmat_t0-time.time())/3600, 'hours' )
+# hdu = fits.PrimaryHDU(ov_mat)
+# hdu.writeto(tempfile + filter + '/' + 'overlap_matrix.fits', overwrite=True)
+# print(tempfile + filter + '/' + 'overlap_matrix.fits saved to tempfile \n')
 
 # In this chunk of code, we iterate through all the SCAs and create interpolated
 # versions of them from all the other SCAs that overlap them
@@ -242,7 +273,7 @@ def make_interpolated_images():
         I_A.apply_object_mask()
 
         I_A_interp = np.zeros(I_A.shape)
-        N_eff = np.zeros(I_A.shape)
+        N_eff = np.memmap(tempfile + obsid_A + '_' + scaid_A + '_Neff.dat', dtype='float16', mode='w+', shape=I_A.shape)
         t_a_start = time.time()
         print('Starting interpolation for SCA A: ', t_a_start)
         sys.stdout.flush()
@@ -300,12 +331,12 @@ function_dictionary = {"quad": quadratic, "abs": absolute_value, "quadloss": qua
 # Optimization Scheme
 
 # Initialize parameters
-p = ds_parameters
+p = parameters()
 
 def cost_function(p, f):
     """
     p: params vector; shape is n_rows * n_scas * n_params_per_row.
-        p should be a ds_params object
+        p should be a parameters object
     f: keyword for function dictionary options; should also set an f_prime
     """
     psi = np.zeros((len(all_scas), 4088, 4088))
@@ -320,27 +351,51 @@ def cost_function(p, f):
         I_A.apply_permanent_mask()
         I_A.apply_object_mask()
 
-        #params_A =  p.params[p.n_rows * i : p.n_rows * (i+1) -1]
-        params_A = p.params[i,:]
-        params_A_mat = np.array(params_A)[:, np.newaxis] * np.ones(I_A.shape)
-
-        I_current = I_A.image -  params_A_mat
+        params_mat_A = p.fwdpar(i, I_A.shape)
+        I_current = I_A.image - params_mat_A
 
         if i == 0:
             make_interpolated_images()
-        J_current = sca_img(obsid_A, scaid_A, interp=True) # I am worried about if the interp images need a WCS object
-#        W[A] = J_current[A].weights  # I think all the weights are dealt with now
-        psi[i] = I_current - J_current
-        epsilon[i] = f(psi[i])
-    return epsilon, psi #, W
+
+        J_A = sca_img(obsid_A, scaid_A, interpolated=True)
+        J_current = J_A.image - params_mat_A
+        psi[i, :, :] = I_current - J_current
+        epsilon[i, :, :] = f(psi[i])
+    return epsilon, psi
 
 
 def residual_function(psi, f_prime):
-    resids = np.zeros((len(all_scas), 4088, 4088))
+    """
+    Calculate the residuals.
+    :param psi: the image difference array (I_A - J_A) (N_SCA, 4088, 4088)
+    :param f_prime:
+    :return:
+    """
+    resids = parameters().params
     for i, sca_a in enumerate(all_scas):
-        psi[i]
-        delta =
-    return f_prime(psi) * (-delta - W)
+        obsid_A , scaid_A = get_ids(sca_a)
+
+        deriv = f_prime(psi[i])
+        term_1 = transpose_par(deriv)
+
+        g_eff_A, n_eff_A = get_effective_gain(sca_a)
+        deriv = deriv / g_eff_A / n_eff_A
+
+        for j, sca_b in enumerate(all_scas):
+            obsid_B, scaid_B = get_ids(sca_b)
+
+            if obsid_B != obsid_A and ov_mat[i, j] != 0:
+                I_B = sca_img(obsid_B, scaid_B)
+                interpolated_deriv = np.zeros(I_B.shape)
+                transpose_interpolate(deriv, I_B, interpolated_deriv) #KL Need to check if these have all the
+                # needed attributes to work (spoiler alert I don't tbink they do)
+
+                term_2 = transpose_par(interpolated_deriv)
+                resids[j,:] += term_2
+
+        resids[i, :] -= term_1
+
+    return resids
 
 
 def linear_search(p, direction, f):
@@ -362,7 +417,7 @@ def linear_search(p, direction, f):
 # Conjugate Gradient Descent
 def conjugate_gradient(p0, tol=1e-5, max_iter=100, f):
     """
-    :param p0: p0 is a ds_parameters object
+    :param p0: p0 is a parameters object
     :param tol:
     :param max_iter:
     :param f: function to use for cost function
