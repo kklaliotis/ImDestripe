@@ -30,6 +30,7 @@ tempfile = '/fs/scratch/PCON0003/klaliotis/destripe/'  # temporary temp file so 
 s_in = 0.11  # arcsec^2
 t_exp = 154  # sec
 A_eff = 7340  # cm ^2
+t0 = time.time()
 
 
 def write_to_file(text):
@@ -152,7 +153,7 @@ class parameters:
         self.params = np.ravel(self.params)
         self.current_shape = '1D'
 
-    def forward_par(self, sca_A):
+    def forward_par(self, sca_i):
         """
         Takes one SCA row (n_rows) from the params and casts it into 2D (n_rows x n_rows)
         :param sca_A: index of which SCA
@@ -160,7 +161,7 @@ class parameters:
         """
         if not self.current_shape == '2D':
             self.params_2_images()
-        return np.array(self.params[sca_A, :])[:, np.newaxis] * np.ones((self.n_rows, self.n_rows))
+        return np.array(self.params[sca_i, :])[:, np.newaxis] * np.ones((self.n_rows, self.n_rows))
 
 
 def get_scas(filter, prefix):
@@ -233,6 +234,11 @@ def get_effective_gain(sca):
     return g_eff, N_eff
 
 def get_ids(sca):
+    """
+    Take an SCA label and parse it out to get the Obsid and SCA id strings.
+    :param sca: sca name from all_scas
+    :return: obsid (str), scaid (str)
+    """
     m = re.search(r'_(\d+)_(\d+)', sca)
     obsid = m.group(1)
     scaid = m.group(2)
@@ -252,9 +258,8 @@ print("Overlap matrix complete. Duration: ", (ovmat_t0-time.time())/3600, 'hours
 # hdu.writeto(tempfile + filter + '/' + 'overlap_matrix.fits', overwrite=True)
 # print(tempfile + filter + '/' + 'overlap_matrix.fits saved to tempfile \n')
 
-# In this chunk of code, we iterate through all the SCAs and create interpolated
+# Iterate through all the SCAs and create interpolated
 # versions of them from all the other SCAs that overlap them
-
 def make_interpolated_images():
     for i, sca_a in enumerate(all_scas):
         m = re.search(r'_(\d+)_(\d+)', sca_a)
@@ -302,8 +307,10 @@ def make_interpolated_images():
 
 def quadratic(x):
     return x**2
+
 def absolute_value(x):
     return np.abs(x)
+
 def quadratic_loss(x, x0, b):
     if (x-x0)<=b:
         return quadratic(x-x0)
@@ -313,8 +320,10 @@ def quadratic_loss(x, x0, b):
 # Derivatives
 def quad_prime(x):
     return 2*x
+
 def absval_prime(x):
     return np.sign(x)
+
 def quadloss_prime(x, x0, b):
     if (x-x0)<=b:
         return quad_prime(x-x0)
@@ -323,7 +332,7 @@ def quadloss_prime(x, x0, b):
 
 #function_dictionary = {"quad": quadratic, "abs": absolute_value, "quadloss": quadratic_loss}
 
-# Optimization Scheme
+# Optimization Functions
 
 def cost_function(p, f):
     """
@@ -422,12 +431,20 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100):
     """
     direction = np.copy(p.params)
     grad_prev = np.copy(p.params)
+    t_start = time.time()
     psi = cost_function(p, f)[1]
+    print('Hours in initial cost function: ', (time.time() - t_start)/3600)
+    sys.stdout.flush()
 
     for _ in range(max_iter):
+        t_start = time.time()
         grad = residual_function(psi, f_prime)
+        print('Hours spent in residual function: ', (time.time() - t_start) / 3600)
+        sys.stdout.flush()
+
         if _ == 0:
             norm_0 = np.linalg.norm(grad)
+
         if np.linalg.norm(grad) < tol * norm_0:
             break
 
@@ -435,7 +452,11 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100):
         direction = -grad + beta * direction
 
         # Perform linear search
+        t_start = time.time()
         p_new, psi_new= linear_search(p, direction, f)
+        print('Hours spent in residual function: ', (time.time() - t_start) / 3600)
+        sys.stdout.flush()
+
         p = p_new
         psi = psi_new
         grad_prev = grad
@@ -446,4 +467,21 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100):
 # Initialize parameters
 p0 = parameters('constant', 4088)
 
-conjugate_gradient(p0, quadratic, quad_prime)
+# Do it
+p = conjugate_gradient(p0, quadratic, quad_prime)
+hdu = fits.PrimaryHDU(p.params)
+hdu.writeto(tempfile + filter + '/' + 'final_params.fits', overwrite=True)
+print(tempfile + filter + '/' + 'final_params.fits created \n')
+
+for i,sca in enumerate(all_scas):
+    obsid, scaid = get_ids(sca)
+    this_sca = sca_img(obsid, scaid)
+    this_param_set =  p.forward_par(i)
+    ds_image = this_sca.image - this_param_set
+
+    header = this_sca.w
+    hdu = fits.PrimaryHDU(ds_image, header=header)
+    hdu.writeto(tempfile + filter + '/DS_' + obsid + scaid + '.fits', overwrite=True)
+
+print('Destriped images saved to' + tempfile + filter + '/DS_*.fits \n')
+print('Total hours elapsed: ', (time.time() - t0)/3600)
