@@ -2,7 +2,6 @@
 Program to remove correlated noise stripes from Roman ST images.
 KL To do list:
 - Link with config file
-- Implement conjugate gradient descent solution
 - Write outputs to file instead of print
 """
 import os
@@ -63,8 +62,6 @@ class sca_img:
     apply_noise: apply the appropriate lab noise frame to the SCA image
     apply_permanent_mask: apply the SCA permanent pixel mask to the image
     apply_object_mask: mask out bright objects from the image
-    get_coordinates:
-    effective_gain:
     """
 
     def __init__(self, obsid, scaid, interpolated=False):
@@ -208,22 +205,19 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
                                              coords.shape[0],
                                              interpolated_image_B.ctypes.data_as(ctypes.POINTER(ctypes.c_float)))
 
-
- def transpose_interpolate(image_B, image_A, interpolated_image_B):
+def transpose_interpolate( image_A, wcs_A, image_B, interpolated_image):
      """
      Interpolate backwards from image_A to image B space
      bilinear_transpose(float* image, int rows, int cols, float* coords, int num_coords, float* original_image)
      :return:
      """
-     x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_A.w, image_B.w, pad=0)
+     x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_B.w, wcs_A, pad=0)
      coords = np.column_stack((x_target, y_target)).flatten()
-     pyimcom_croutines.bilinear_transpose(image_B.image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                                            image_B.g_eff.ctypes.data_as(
-                                                 ctypes.POINTER(ctypes.c_float)),
+     pyimcom_croutines.bilinear_transpose(image_A.image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                                             image_B.shape[0], image_B.shape[1],
                                             coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                                             coords.shape[0],
-                                            interpolated_image_B.ctypes.data_as(
+                                            interpolated_image.ctypes.data_as(
                                                                ctypes.POINTER(ctypes.c_float)))
 
 
@@ -235,7 +229,7 @@ def get_effective_gain(sca):
     obsid = m.group(1)
     scaid = m.group(2)
     g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float16', mode='r', shape=(4088,4088) )
-    N_eff = np.memmap(tempfile + obsid_A + '_' + scaid_A + '_Neff.dat', dtype='float16', mode='w+', shape=I_A.shape)
+    N_eff = np.memmap(tempfile + obsid + '_' + scaid + '_Neff.dat', dtype='float16', mode='r', shape=(4088,4088))
     return g_eff, N_eff
 
 def get_ids(sca):
@@ -293,7 +287,8 @@ def make_interpolated_images():
                 I_A_interp += interpolated_image
                 N_eff += I_B.mask
 
-        hdu = fits.PrimaryHDU(np.divide(np.divide(I_A_interp, N_eff)), I_A.effective_gain())
+        header = I_A.w.to_header()
+        hdu = fits.PrimaryHDU( np.divide(np.divide(I_A_interp, N_eff)), I_A.effective_gain(), header=header)
         hdu.writeto(tempfile + filter + '/' + obsid_A + '_' + scaid_A + '_interp.fits', overwrite=True)
         print(tempfile + filter + '/' + obsid_A + '_' + scaid_A + '_interp.fits created \n')
         t_elapsed_a = time.time() - t_a_start
@@ -320,18 +315,15 @@ def quad_prime(x):
     return 2*x
 def absval_prime(x):
     return np.sign(x)
-def quadloss_prime(x, x0):
+def quadloss_prime(x, x0, b):
     if (x-x0)<=b:
         return quad_prime(x-x0)
     else:
         return absval_prime(x-x0)
 
-function_dictionary = {"quad": quadratic, "abs": absolute_value, "quadloss": quadratic_loss}
+#function_dictionary = {"quad": quadratic, "abs": absolute_value, "quadloss": quadratic_loss}
 
 # Optimization Scheme
-
-# Initialize parameters
-p = parameters()
 
 def cost_function(p, f):
     """
@@ -371,26 +363,29 @@ def residual_function(psi, f_prime):
     :param f_prime:
     :return:
     """
-    resids = parameters().params
+    resids = parameters('constant', 4088).params
     for i, sca_a in enumerate(all_scas):
         obsid_A , scaid_A = get_ids(sca_a)
+        file = fits.open(tempfile + filter + '/' + obsid_A + '_' + scaid_A + '_interp.fits')
+        wcs_A = wcs.WCS(file[0].header)
+        file.close()
 
-        deriv = f_prime(psi[i])
-        term_1 = transpose_par(deriv)
+        gradient_interpolated = f_prime(psi[i])
+        term_1 = transpose_par(gradient_interpolated)
 
         g_eff_A, n_eff_A = get_effective_gain(sca_a)
-        deriv = deriv / g_eff_A / n_eff_A
+        gradient_interpolated = gradient_interpolated / g_eff_A / n_eff_A
 
         for j, sca_b in enumerate(all_scas):
             obsid_B, scaid_B = get_ids(sca_b)
+            g_eff_B = get_effective_gain(sca_a)[0]
 
             if obsid_B != obsid_A and ov_mat[i, j] != 0:
                 I_B = sca_img(obsid_B, scaid_B)
-                interpolated_deriv = np.zeros(I_B.shape)
-                transpose_interpolate(deriv, I_B, interpolated_deriv) #KL Need to check if these have all the
-                # needed attributes to work (spoiler alert I don't tbink they do)
-
-                term_2 = transpose_par(interpolated_deriv)
+                gradient_original = np.zeros(I_B.shape)
+                transpose_interpolate(gradient_interpolated, wcs_A, I_B, gradient_original)
+                gradient_original *= g_eff_B
+                term_2 = transpose_par(gradient_original)
                 resids[j,:] += term_2
 
         resids[i, :] -= term_1
@@ -400,36 +395,40 @@ def residual_function(psi, f_prime):
 
 def linear_search(p, direction, f):
     alpha = 0.1  # Step size
-    best_p = p + alpha * direction
-    best_epsilon, best_psi= cost_function(best_p, f)
+    p.params = p.params + alpha * direction
+    best_epsilon, best_psi= cost_function(p, f)
 
     # Simple linear search
+    new_p = parameters('constant', 4088)
     for i in range(1, 11):
-        new_p = p + i * alpha * direction
+        new_p.params = new_p.params + i * alpha * direction
         new_epsilon, new_psi = cost_function(new_p, f)
         if new_epsilon < best_epsilon:
-            best_p = new_p
+            p = new_p
             best_epsilon = new_epsilon
             best_psi = new_psi
-    return best_p, best_psi
+    return p, best_psi
 
 
 # Conjugate Gradient Descent
-def conjugate_gradient(p0, tol=1e-5, max_iter=100, f):
+def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100):
     """
-    :param p0: p0 is a parameters object
+    :param p: p is a parameters object
     :param tol:
     :param max_iter:
     :param f: function to use for cost function
+    :param f_prime: derivative of f. KL: eventually f should dictate f prime
     :return:
     """
-    direction = np.copy(p0.params)
-    grad_prev = np.copy(p0.params)
-    psi = cost_function(p0, f)[1]
+    direction = np.copy(p.params)
+    grad_prev = np.copy(p.params)
+    psi = cost_function(p, f)[1]
 
     for _ in range(max_iter):
         grad = residual_function(psi, f_prime)
-        if np.linalg.norm(grad) < tol:
+        if _ == 0:
+            norm_0 = np.linalg.norm(grad)
+        if np.linalg.norm(grad) < tol * norm_0:
             break
 
         beta = np.square(grad) / np.square(grad_prev)
@@ -442,3 +441,9 @@ def conjugate_gradient(p0, tol=1e-5, max_iter=100, f):
         grad_prev = grad
 
     return p
+
+
+# Initialize parameters
+p0 = parameters('constant', 4088)
+
+conjugate_gradient(p0, quadratic, quad_prime)
