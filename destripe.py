@@ -4,28 +4,29 @@ KL To do list:
 - Link with config file
 - Write outputs to file instead of print
 """
-import os
+
+#import os
 import glob
 import time
 import ctypes
 import numpy as np
 from astropy.io import fits
 from astropy import wcs
-from scipy import ndimage
 from utils import compareutils
 import re
 import sys
 import pyimcom_croutines
 
 # KL: Placeholders, some of these should be input arguments or in a config or something
-input_dir = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/simple/'
+#input_dir = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/simple/'
+input_dir = '/fs/scratch/PCON0003/klaliotis/destripe/inputs/'
 image_prefix = 'Roman_WAS_simple_model_'
 labnoise_prefix = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/labnoise/slope_'
 filter = 'H158'
 model_params = {'constant': 1, 'linear': 2}
 permanent_mask = '/users/PCON0003/cond0007/imcom/coadd-test-fall2022/permanent_mask_220730.fits'
-outfile = '/fs/scratch/PCON0003/klaliotis/destripe/destripe_' + filter + '_out.txt'
-tempfile = '/fs/scratch/PCON0003/klaliotis/destripe/'  # temporary temp file so that i can check these things
+outfile = '/fs/scratch/PCON0003/klaliotis/destripe/test_out/destripe_' + filter + '_out.txt'
+tempfile = '/fs/scratch/PCON0003/klaliotis/destripe/test_out'  # temporary temp file so that i can check these things
 # tempfile = '/tmp/klaliotis-tmp/'
 s_in = 0.11  # arcsec^2
 t_exp = 154  # sec
@@ -56,7 +57,7 @@ class sca_img:
     Attributes:
         image: the SCA image (4088x4088)
         shape: shape of the image
-        wcs: the astropy.wcs object associated with this SCA
+        w: the astropy.wcs object associated with this SCA
         mask: the full pixel mask that is used on this image. Is correct only after running BOTH apply mask methods
         g_eff : effective gain in each pixel of the image
     Functions:
@@ -83,24 +84,35 @@ class sca_img:
         self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float16', mode='w+', shape=self.shape)
         for i in range(self.shape[0]):
             for j in range(self.shape[1]):
-                derivative_matrix = wcs.utils.local_partial_pixel_derivatives(self.w, self.image[i,j])
+                derivative_matrix = wcs.utils.local_partial_pixel_derivatives(self.w, i, j)
                 det = np.linalg.det(derivative_matrix)
                 dec = self.w.pixel_to_world(i,j).dec.value
                 self.g_eff[i,j] = det * np.cos(np.deg2rad(dec))
 
-
     def apply_noise(self):
+        """
+        Add detector noise to self.image
+        :return:
+        """
         noiseframe = np.copy(fits.open(labnoise_prefix + self.obsid + '_' + self.scaid + '.fits')['PRIMARY'].data)
         self.image += noiseframe[4:4092, 4:4092]
         return self.image
 
     def apply_permanent_mask(self):
+        """
+        Apply permanent pixel mask. updates self.image and self.mask
+        :return:
+        """
         pm = np.copy(fits.open(permanent_mask)[0].data[int(self.scaid) - 1])
         self.image = self.image * pm
         self.mask = self.mask * pm
         return self.image
 
     def apply_object_mask(self):
+        """
+        Apply bright object mask. updates self.image and self.mask
+        :return:
+        """
         median = np.median(self.image)
         for i in range(self.shape[0]):
             for j in range(self.shape[1]):
@@ -110,6 +122,10 @@ class sca_img:
         return self.image
 
     def get_coordinates(self):
+        """
+        create an array of ra, dec coords for the image
+        :return: coords, an array of (ra, dec) pairs
+        """
         wcs = self.w
         h = self.shape[0]
         w = self.shape[1]
@@ -146,17 +162,25 @@ class parameters:
         self.current_shape = '2D'
 
     def params_2_images(self):
+        """
+        Reshape flattened parameters into 2D array with 1 row per sca and n_rows (in image) * params_per_row entries
+        :return:
+        """
         self.params = np.reshape(self.params, ((len(all_scas), self.n_rows * self.params_per_row)))
         self.current_shape = '2D'
 
     def flatten_params(self):
+        """
+        Reshape 2D params array into flat
+        :return:
+        """
         self.params = np.ravel(self.params)
         self.current_shape = '1D'
 
     def forward_par(self, sca_i):
         """
         Takes one SCA row (n_rows) from the params and casts it into 2D (n_rows x n_rows)
-        :param sca_A: index of which SCA
+        :param sca_i: index of which SCA
         :return:
         """
         if not self.current_shape == '2D':
@@ -206,6 +230,7 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
                                              coords.shape[0],
                                              interpolated_image_B.ctypes.data_as(ctypes.POINTER(ctypes.c_float)))
 
+
 def transpose_interpolate( image_A, wcs_A, image_B, interpolated_image):
      """
      Interpolate backwards from image_A to image B space
@@ -223,15 +248,28 @@ def transpose_interpolate( image_A, wcs_A, image_B, interpolated_image):
 
 
 def transpose_par(array):
+    """
+    transpose interpolates a params image (sums across rows)
+    :param array: input array
+    :return:  1D vec of N_params
+    """
     return np.sum(array, axis=1)
 
+
 def get_effective_gain(sca):
+    """
+    retrieve the effective gain and n_eff of the image. valid only for interpolated images
+    :param sca: whose info you want
+    :return: g_eff: memmap array of the effective gain in each pixel
+    :return: N_eff: memmap array of how many image "B"s contributed to that interpolated image
+    """
     m = re.search(r'_(\d+)_(\d+)', sca)
     obsid = m.group(1)
     scaid = m.group(2)
     g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float16', mode='r', shape=(4088,4088) )
     N_eff = np.memmap(tempfile + obsid + '_' + scaid + '_Neff.dat', dtype='float16', mode='r', shape=(4088,4088))
     return g_eff, N_eff
+
 
 def get_ids(sca):
     """
@@ -293,7 +331,7 @@ def make_interpolated_images():
                 N_eff += I_B.mask
 
         header = I_A.w.to_header()
-        hdu = fits.PrimaryHDU( np.divide(np.divide(I_A_interp, N_eff)), I_A.effective_gain(), header=header)
+        hdu = fits.PrimaryHDU(np.divide(np.divide(I_A_interp, N_eff), I_A.g_eff()), header=header)
         hdu.writeto(tempfile + filter + '/' + obsid_A + '_' + scaid_A + '_interp.fits', overwrite=True)
         print(tempfile + filter + '/' + obsid_A + '_' + scaid_A + '_interp.fits created \n')
         t_elapsed_a = time.time() - t_a_start
@@ -352,7 +390,7 @@ def cost_function(p, f):
         I_A.apply_permanent_mask()
         I_A.apply_object_mask()
 
-        params_mat_A = p.fwdpar(i, I_A.shape)
+        params_mat_A = p.forward_par(i, I_A.shape)
         I_current = I_A.image - params_mat_A
 
         if i == 0:
