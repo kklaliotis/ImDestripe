@@ -5,7 +5,7 @@ KL To do list:
 - Write outputs to file instead of print
 """
 
-#import os
+import os
 import glob
 import time
 import ctypes
@@ -67,6 +67,12 @@ class sca_img:
     """
 
     def __init__(self, obsid, scaid, interpolated=False):
+        """
+
+        :param obsid:
+        :param scaid:
+        :param interpolated:
+        """
         if interpolated:
             file = fits.open(tempfile + filter + '/' + obsid + '_' + scaid + '_interp.fits')
         else:
@@ -81,14 +87,15 @@ class sca_img:
         self.mask = np.ones(self.shape)
 
         # Calculate effecive gain
-        self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float16', mode='w+', shape=self.shape)
-        for i in range(self.shape[0]):
-            for j in range(self.shape[1]):
-                derivative_matrix = wcs.utils.local_partial_pixel_derivatives(self.w, i, j)
-                det = np.linalg.det(derivative_matrix)
-                dec = self.w.pixel_to_world(i,j).dec.value
-                self.g_eff[i,j] = det * np.cos(np.deg2rad(dec))
-
+        if not os.path.isfile(tempfile + obsid+'_'+scaid+'_geff.dat'):
+            self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float16', mode='w+', shape=self.shape)
+            ra, dec = self.get_coordinates(pad=2)
+            derivs = np.array(((ra[1:-1,2:] - ra[1:-1,:-2])/2, (ra[2:, 1:-1] - ra[:-2, 1:-1])/2,
+                              (dec[1:-1,2:] - dec[1:-1,:-2])/2, (dec[2:, 1:-1] - dec[:-2, 1:-1])/2))
+            derivs_px = np.reshape(np.transpose(derivs), (4088**2, 2, 2))
+            det_mat = np.reshape(np.linalg.det(derivs_px), (4088,4088))
+            self.g_eff = det_mat * np.cos(np.deg2rad(dec))
+            
     def apply_noise(self):
         """
         Add detector noise to self.image
@@ -121,20 +128,21 @@ class sca_img:
                     self.mask[i - 2:i + 2, j - 2:j + 2] = 0
         return self.image
 
-    def get_coordinates(self):
+    def get_coordinates(self, pad=0):
         """
         create an array of ra, dec coords for the image
+        :param pad: add padding to the array. default is zero
         :return: coords, an array of (ra, dec) pairs
         """
         wcs = self.w
-        h = self.shape[0]
-        w = self.shape[1]
+        h = self.shape[0] + pad
+        w = self.shape[1] + pad
         x_i, y_i = np.meshgrid(np.arange(h), np.arange(w))
         x_flat = x_i.flatten()
         y_flat = y_i.flatten()
         ra, dec = wcs.all_pix2world(x_flat, y_flat, 0)  # 0 is for the first frame (1-indexed)
-        coords = np.column_stack((ra, dec))
-        return coords
+        # coords = np.column_stack((ra, dec))
+        return ra, dec
 
 
 class parameters:
@@ -368,7 +376,7 @@ def quadloss_prime(x, x0, b):
     else:
         return absval_prime(x-x0)
 
-#function_dictionary = {"quad": quadratic, "abs": absolute_value, "quadloss": quadratic_loss}
+# function_dictionary = {"quad": quadratic, "abs": absolute_value, "quadloss": quadratic_loss}
 
 # Optimization Functions
 
@@ -390,7 +398,7 @@ def cost_function(p, f):
         I_A.apply_permanent_mask()
         I_A.apply_object_mask()
 
-        params_mat_A = p.forward_par(i, I_A.shape)
+        params_mat_A = p.forward_par(i)
         I_current = I_A.image - params_mat_A
 
         if i == 0:
