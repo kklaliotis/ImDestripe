@@ -16,6 +16,7 @@ from utils import compareutils
 import re
 import sys
 import pyimcom_croutines
+import pkgutil
 
 # KL: Placeholders, some of these should be input arguments or in a config or something
 #input_dir = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/simple/'
@@ -26,12 +27,13 @@ filter = 'H158'
 model_params = {'constant': 1, 'linear': 2}
 permanent_mask = '/users/PCON0003/cond0007/imcom/coadd-test-fall2022/permanent_mask_220730.fits'
 outfile = '/fs/scratch/PCON0003/klaliotis/destripe/test_out/destripe_' + filter + '_out.txt'
-tempfile = '/fs/scratch/PCON0003/klaliotis/destripe/test_out'  # temporary temp file so that i can check these things
+tempfile = '/fs/scratch/PCON0003/klaliotis/destripe/test_out/'  # temporary temp file so that i can check these things
 # tempfile = '/tmp/klaliotis-tmp/'
 s_in = 0.11  # arcsec^2
 t_exp = 154  # sec
 A_eff = 7340  # cm ^2
 t0 = time.time()
+test = True
 
 
 def write_to_file(text):
@@ -74,12 +76,14 @@ class sca_img:
         :param interpolated:
         """
         if interpolated:
-            file = fits.open(tempfile + filter + '/' + obsid + '_' + scaid + '_interp.fits')
+            file = fits.open(tempfile +'interpolations/' + obsid + '_' + scaid + '_interp.fits')
+            image_hdu = 'PRIMARY'
         else:
             file = fits.open(input_dir + image_prefix + filter + '_' + obsid + '_' + scaid + '.fits')
-        self.image = np.copy(file['SCI'].data)
+            image_hdu = 'SCI'
+        self.image = np.copy(file[image_hdu].data).astype(np.float32)
         self.shape = np.shape(self.image)
-        self.w = wcs.WCS(file['SCI'].header)
+        self.w = wcs.WCS(file[image_hdu].header)
         file.close()
 
         self.obsid = obsid
@@ -88,14 +92,18 @@ class sca_img:
 
         # Calculate effecive gain
         if not os.path.isfile(tempfile + obsid+'_'+scaid+'_geff.dat'):
-            self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float16', mode='w+', shape=self.shape)
+            self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='w+', shape=self.shape)
             ra, dec = self.get_coordinates(pad=2)
+            ra = ra.reshape((4090, 4090))
+            dec = dec.reshape((4090, 4090))
             derivs = np.array(((ra[1:-1,2:] - ra[1:-1,:-2])/2, (ra[2:, 1:-1] - ra[:-2, 1:-1])/2,
                               (dec[1:-1,2:] - dec[1:-1,:-2])/2, (dec[2:, 1:-1] - dec[:-2, 1:-1])/2))
             derivs_px = np.reshape(np.transpose(derivs), (4088**2, 2, 2))
             det_mat = np.reshape(np.linalg.det(derivs_px), (4088,4088))
-            self.g_eff = det_mat * np.cos(np.deg2rad(dec))
-            
+            self.g_eff = det_mat * np.cos(np.deg2rad(dec[1:4089,1:4089]))
+        else:
+            self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='r', shape=self.shape)
+
     def apply_noise(self):
         """
         Add detector noise to self.image
@@ -228,15 +236,33 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
     :param interpolated_image_B : an ndarray of zeros with shape of Image A.
     interpolated_image_B is updated in-place.
     """
+
     x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_A.w, image_B.w, pad=0)
-    coords = np.column_stack((x_target, y_target)).flatten()
-    pyimcom_croutines.bilinear_interpolation(image_B.image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                                             image_B.g_eff.ctypes.data_as(
-                                                 ctypes.POINTER(ctypes.c_float)),
-                                             image_B.shape[0], image_B.shape[1],
-                                             coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                                             coords.shape[0],
-                                             interpolated_image_B.ctypes.data_as(ctypes.POINTER(ctypes.c_float)))
+    coords = np.column_stack((x_target, y_target)).flatten().astype(np.float32)
+
+    # Verify data just before C call
+    rows = int(image_B.shape[0])
+    cols = int(image_B.shape[1])
+    num_coords = coords.shape[0] // 2
+
+    print("Just before C call:")
+    print(f"rows (Python): {rows}")
+    print(f"cols (Python): {cols}")
+    print(f"num_coords (Python): {num_coords}")
+    print(f"g_eff (Python): {image_B.g_eff}")
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    pyimcom_croutines.bilinear_interpolation(image_B.image,
+                                             image_B.g_eff,
+                                             rows, cols,
+                                             coords,
+                                             num_coords,
+                                             interpolated_image_B)
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    print('Just after croutine call')
 
 
 def transpose_interpolate( image_A, wcs_A, image_B, interpolated_image):
@@ -247,12 +273,16 @@ def transpose_interpolate( image_A, wcs_A, image_B, interpolated_image):
      """
      x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_B.w, wcs_A, pad=0)
      coords = np.column_stack((x_target, y_target)).flatten()
-     pyimcom_croutines.bilinear_transpose(image_A.image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                                            image_B.shape[0], image_B.shape[1],
-                                            coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                                            coords.shape[0],
-                                            interpolated_image.ctypes.data_as(
-                                                               ctypes.POINTER(ctypes.c_float)))
+
+     rows = int(image_B.shape[0])
+     cols = int(image_B.shape[1])
+     num_coords = coords.shape[0] // 2
+
+     pyimcom_croutines.bilinear_transpose(image_A.image,
+                                            rows, cols,
+                                            coords,
+                                            num_coords,
+                                            interpolated_image)
 
 
 def transpose_par(array):
@@ -274,8 +304,8 @@ def get_effective_gain(sca):
     m = re.search(r'_(\d+)_(\d+)', sca)
     obsid = m.group(1)
     scaid = m.group(2)
-    g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float16', mode='r', shape=(4088,4088) )
-    N_eff = np.memmap(tempfile + obsid + '_' + scaid + '_Neff.dat', dtype='float16', mode='r', shape=(4088,4088))
+    g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='r', shape=(4088,4088) )
+    N_eff = np.memmap(tempfile + obsid + '_' + scaid + '_Neff.dat', dtype='float32', mode='r', shape=(4088,4088))
     return g_eff, N_eff
 
 
@@ -296,13 +326,22 @@ all_scas, all_wcs = get_scas(filter, image_prefix)
 print(len(all_scas), " SCAs in this mosaic")
 print(len(all_wcs), "WCS in the list (if not same as above, we have a problem)")
 
-ovmat_t0 = time.time()
-print('Overlap matrix computing start')
-ov_mat = compareutils.get_overlap_matrix(all_wcs, verbose=True)  # an N_wcs x N_wcs matrix containing fractional overlap
-print("Overlap matrix complete. Duration: ", (ovmat_t0-time.time())/3600, 'hours' )
-# hdu = fits.PrimaryHDU(ov_mat)
-# hdu.writeto(tempfile + filter + '/' + 'overlap_matrix.fits', overwrite=True)
-# print(tempfile + filter + '/' + 'overlap_matrix.fits saved to tempfile \n')
+if test:
+    if os.path.isfile(tempfile + 'ovmat.npy'):
+        ov_mat = np.load(tempfile + 'ovmat.npy')
+    else:
+        ovmat_t0 = time.time()
+        print('Overlap matrix computing start')
+        ov_mat = compareutils.get_overlap_matrix(all_wcs, verbose=True)  # an N_wcs x N_wcs matrix containing fractional overlap
+        np.save(tempfile+'ovmat.npy', ov_mat)
+        print("Overlap matrix complete. Duration: ", (time.time()-ovmat_t0)/3600, 'hours' )
+        print("Overlap matrix saved to: "+tempfile+"ovmat.npy")
+else:
+    ovmat_t0 = time.time()
+    print('Overlap matrix computing start')
+    ov_mat = compareutils.get_overlap_matrix(all_wcs,
+                                             verbose=True)  # an N_wcs x N_wcs matrix containing fractional overlap
+    print("Overlap matrix complete. Duration: ", (time.time() - ovmat_t0) / 3600, 'hours')
 
 # Iterate through all the SCAs and create interpolated
 # versions of them from all the other SCAs that overlap them
@@ -318,9 +357,10 @@ def make_interpolated_images():
         I_A.apply_object_mask()
 
         I_A_interp = np.zeros(I_A.shape)
-        N_eff = np.memmap(tempfile + obsid_A + '_' + scaid_A + '_Neff.dat', dtype='float16', mode='w+', shape=I_A.shape)
+        N_eff = np.memmap(tempfile + obsid_A + '_' + scaid_A + '_Neff.dat', dtype='float32', mode='w+', shape=I_A.shape)
+        N_eff += 1 # Not sure if this is right but if a pixel in A doesnt have any B pixels we cant div by zero...
         t_a_start = time.time()
-        print('Starting interpolation for SCA A: ', t_a_start)
+        print('Starting interpolation for SCA A. Time: ', t_a_start)
         sys.stdout.flush()
 
         for j, sca_b in enumerate(all_scas):
@@ -329,6 +369,7 @@ def make_interpolated_images():
             scaid_B = m.group(2)
 
             if obsid_B != obsid_A and ov_mat[i, j] != 0: # Check if this sca_b overlaps sca_a
+                print('aaa')
                 I_B = sca_img(obsid_B, scaid_B)
                 I_B.apply_noise()
                 I_B.apply_permanent_mask()
@@ -337,13 +378,17 @@ def make_interpolated_images():
                 interpolate_image_bilinear(I_B, I_A, interpolated_image)
                 I_A_interp += interpolated_image
                 N_eff += I_B.mask
+                print('B done')
+        print('A interpolation done')
 
         header = I_A.w.to_header()
-        hdu = fits.PrimaryHDU(np.divide(np.divide(I_A_interp, N_eff), I_A.g_eff()), header=header)
-        hdu.writeto(tempfile + filter + '/' + obsid_A + '_' + scaid_A + '_interp.fits', overwrite=True)
-        print(tempfile + filter + '/' + obsid_A + '_' + scaid_A + '_interp.fits created \n')
+        I_A_interp = np.divide(I_A_interp, N_eff)
+        I_A_interp = np.divide(I_A_interp, I_A.g_eff)
+        hdu = fits.PrimaryHDU(I_A_interp, header=header)
+        hdu.writeto(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits', overwrite=True)
+        print(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits created \n')
         t_elapsed_a = time.time() - t_a_start
-        print('Time to generate this SCA: ', t_elapsed_a)
+        print('Hours to generate this SCA: ', t_elapsed_a/3600)
         print('Remaining SCAs: ' + str(len(all_scas) - 1 - i) + '\n')
 
 
@@ -421,7 +466,7 @@ def residual_function(psi, f_prime):
     resids = parameters('constant', 4088).params
     for i, sca_a in enumerate(all_scas):
         obsid_A , scaid_A = get_ids(sca_a)
-        file = fits.open(tempfile + filter + '/' + obsid_A + '_' + scaid_A + '_interp.fits')
+        file = fits.open(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits')
         wcs_A = wcs.WCS(file[0].header)
         file.close()
 
