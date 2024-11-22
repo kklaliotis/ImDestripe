@@ -100,7 +100,7 @@ class sca_img:
                               (dec[1:-1,2:] - dec[1:-1,:-2])/2, (dec[2:, 1:-1] - dec[:-2, 1:-1])/2))
             derivs_px = np.reshape(np.transpose(derivs), (4088**2, 2, 2))
             det_mat = np.reshape(np.linalg.det(derivs_px), (4088,4088))
-            g_eff = det_mat * np.cos(np.deg2rad(dec[1:4089,1:4089]))
+            g_eff[:,:] = det_mat * np.cos(np.deg2rad(dec[1:4089,1:4089]))
             del g_eff
 
         self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='r', shape=self.shape)
@@ -367,6 +367,7 @@ def make_interpolated_images():
         N_eff = np.memmap(tempfile + obsid_A + '_' + scaid_A + '_Neff.dat', dtype='float32', mode='w+', shape=I_A.shape)
         t_a_start = time.time()
         print('Starting interpolation for SCA A. Time: ', t_a_start)
+        print('Image A Checks: Image nonzero, G_eff nonzero', np.nonzero(I_A.image)[0], np.nonzero(I_A.g_eff)[0])
         sys.stdout.flush()
 
         N_BinA = 0
@@ -376,12 +377,15 @@ def make_interpolated_images():
             scaid_B = m.group(2)
 
             if obsid_B != obsid_A and ov_mat[i, j] != 0: # Check if this sca_b overlaps sca_a
+                print('Image B: '+ obsid_B + '_' + scaid_B)
                 N_BinA+=1
                 I_B = sca_img(obsid_B, scaid_B)
                 I_B.apply_noise()
                 I_B.apply_permanent_mask()
                 I_B.apply_object_mask()
                 interpolated_image = np.zeros_like(I_A.image)
+                print('Image B Checks: Image nonzero, G_eff nonzero', np.nonzero(I_B.image)[0],
+                      np.nonzero(I_B.g_eff)[0])
                 interpolate_image_bilinear(I_B, I_A, interpolated_image)
                 I_A_interp += interpolated_image
                 N_eff += I_B.mask
@@ -489,23 +493,27 @@ def residual_function(psi, f_prime):
 
         # Retrieve the effective gain and N_eff to normalize the gradient before transposing back
         g_eff_A, n_eff_A = get_effective_gain(sca_a)
-        print('G_eff, N_eff nonzero check: ', np.nonzero(g_eff_A), np.nonzero(n_eff_A))
+        print('SCA A', obsid_A, scaid_A, 'G_eff, N_eff retrieved nonzero check: ',
+              np.nonzero(g_eff_A)[0], np.nonzero(n_eff_A)[0])
         gradient_interpolated = gradient_interpolated / g_eff_A / n_eff_A
 
         for j, sca_b in enumerate(all_scas):
             obsid_B, scaid_B = get_ids(sca_b)
-            g_eff_B = get_effective_gain(sca_a)[0]
+            #g_eff_B = get_effective_gain(sca_a)[0]
 
             if obsid_B != obsid_A and ov_mat[i, j] != 0:
                 I_B = sca_img(obsid_B, scaid_B)
                 gradient_original = np.zeros(I_B.shape)
+                print('Just before transpose interpolation (C) for: '+obsid_B+'_'+scaid_B)
                 transpose_interpolate(gradient_interpolated, wcs_A, I_B, gradient_original)
-                gradient_original *= g_eff_B
+                print('Just after transpose interpolation (C)')
+                gradient_original *= I_B.g_eff
                 term_2 = transpose_par(gradient_original)
+                print('Just after transpose interpolation of parameters')
                 resids[j,:] += term_2
 
         resids[i, :] -= term_1
-
+    print('Residuals calculation finished')
     return resids
 
 
