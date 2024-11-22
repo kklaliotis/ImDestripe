@@ -92,7 +92,7 @@ class sca_img:
 
         # Calculate effecive gain
         if not os.path.isfile(tempfile + obsid+'_'+scaid+'_geff.dat'):
-            self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='w+', shape=self.shape)
+            g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='w+', shape=self.shape)
             ra, dec = self.get_coordinates(pad=2)
             ra = ra.reshape((4090, 4090))
             dec = dec.reshape((4090, 4090))
@@ -100,9 +100,10 @@ class sca_img:
                               (dec[1:-1,2:] - dec[1:-1,:-2])/2, (dec[2:, 1:-1] - dec[:-2, 1:-1])/2))
             derivs_px = np.reshape(np.transpose(derivs), (4088**2, 2, 2))
             det_mat = np.reshape(np.linalg.det(derivs_px), (4088,4088))
-            self.g_eff = det_mat * np.cos(np.deg2rad(dec[1:4089,1:4089]))
-        else:
-            self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='r', shape=self.shape)
+            g_eff = det_mat * np.cos(np.deg2rad(dec[1:4089,1:4089]))
+            del g_eff
+
+        self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='r', shape=self.shape)
 
     def apply_noise(self):
         """
@@ -149,8 +150,11 @@ class sca_img:
         x_flat = x_i.flatten()
         y_flat = y_i.flatten()
         ra, dec = wcs.all_pix2world(x_flat, y_flat, 0)  # 0 is for the first frame (1-indexed)
-        # coords = np.column_stack((ra, dec))
         return ra, dec
+
+    # def close(self):
+    #     del self.image
+    #     del self.g_eff
 
 
 class parameters:
@@ -265,10 +269,14 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
     print('Just after croutine call')
 
 
-def transpose_interpolate( image_A, wcs_A, image_B, interpolated_image):
+def transpose_interpolate( image_A, wcs_A, image_B, original_image):
      """
-     Interpolate backwards from image_A to image B space
-     bilinear_transpose(float* image, int rows, int cols, float* coords, int num_coords, float* original_image)
+     Interpolate backwards from image_A to image B space.
+     :param image_A : a 2D numpy array (will be the interpolated gradient image)
+     :param wcs_A : the WCS (a wcs.WCS object) that goes with image A
+     :param image_B : An SCA object, the image we're interpolating back onto
+     :param original_image: 2D numpy array, the gradient image re-interpolated into image B space
+     note: bilinear_transpose(float* image, int rows, int cols, float* coords, int num_coords, float* original_image)
      :return:
      """
      x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_B.w, wcs_A, pad=0)
@@ -278,11 +286,11 @@ def transpose_interpolate( image_A, wcs_A, image_B, interpolated_image):
      cols = int(image_B.shape[1])
      num_coords = coords.shape[0] // 2
 
-     pyimcom_croutines.bilinear_transpose(image_A.image,
+     pyimcom_croutines.bilinear_transpose(image_A,
                                             rows, cols,
                                             coords,
                                             num_coords,
-                                            interpolated_image)
+                                            original_image)
 
 
 def transpose_par(array):
@@ -296,7 +304,7 @@ def transpose_par(array):
 
 def get_effective_gain(sca):
     """
-    retrieve the effective gain and n_eff of the image. valid only for interpolated images
+    retrieve the effective gain and n_eff of the image. valid only for already-interpolated images
     :param sca: whose info you want
     :return: g_eff: memmap array of the effective gain in each pixel
     :return: N_eff: memmap array of how many image "B"s contributed to that interpolated image
@@ -324,7 +332,6 @@ def get_ids(sca):
 
 all_scas, all_wcs = get_scas(filter, image_prefix)
 print(len(all_scas), " SCAs in this mosaic")
-print(len(all_wcs), "WCS in the list (if not same as above, we have a problem)")
 
 if test:
     if os.path.isfile(tempfile + 'ovmat.npy'):
@@ -358,18 +365,18 @@ def make_interpolated_images():
 
         I_A_interp = np.zeros(I_A.shape)
         N_eff = np.memmap(tempfile + obsid_A + '_' + scaid_A + '_Neff.dat', dtype='float32', mode='w+', shape=I_A.shape)
-        N_eff += 1 # Not sure if this is right but if a pixel in A doesnt have any B pixels we cant div by zero...
         t_a_start = time.time()
         print('Starting interpolation for SCA A. Time: ', t_a_start)
         sys.stdout.flush()
 
+        N_BinA = 0
         for j, sca_b in enumerate(all_scas):
             m = re.search(r'_(\d+)_(\d+)', sca_b)
             obsid_B = m.group(1)
             scaid_B = m.group(2)
 
             if obsid_B != obsid_A and ov_mat[i, j] != 0: # Check if this sca_b overlaps sca_a
-                print('aaa')
+                N_BinA+=1
                 I_B = sca_img(obsid_B, scaid_B)
                 I_B.apply_noise()
                 I_B.apply_permanent_mask()
@@ -378,8 +385,8 @@ def make_interpolated_images():
                 interpolate_image_bilinear(I_B, I_A, interpolated_image)
                 I_A_interp += interpolated_image
                 N_eff += I_B.mask
-                print('B done')
-        print('A interpolation done')
+
+        print('A interpolation done. Number of contributing SCAs: ', N_BinA)
 
         header = I_A.w.to_header()
         I_A_interp = np.divide(I_A_interp, N_eff)
@@ -388,8 +395,10 @@ def make_interpolated_images():
         hdu.writeto(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits', overwrite=True)
         print(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits created \n')
         t_elapsed_a = time.time() - t_a_start
-        print('Hours to generate this SCA: ', t_elapsed_a/3600)
+        print('Hours to generate this interpolation: ', t_elapsed_a/3600)
         print('Remaining SCAs: ' + str(len(all_scas) - 1 - i) + '\n')
+
+        del N_eff
 
 
 # Function options. KL: Could move these to another .py file and call them as modules?
@@ -431,6 +440,7 @@ def cost_function(p, f):
         p should be a parameters object
     f: keyword for function dictionary options; should also set an f_prime
     """
+    print('Initializing cost function')
     psi = np.zeros((len(all_scas), 4088, 4088))
     epsilon = np.copy(psi)
 
@@ -464,16 +474,22 @@ def residual_function(psi, f_prime):
     :return:
     """
     resids = parameters('constant', 4088).params
+    print('Residual calculation started')
     for i, sca_a in enumerate(all_scas):
+
+        # Go and get the WCS object for image A
         obsid_A , scaid_A = get_ids(sca_a)
         file = fits.open(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits')
         wcs_A = wcs.WCS(file[0].header)
         file.close()
 
+        # Calculate and then transpose the gradient of I_A-J_A
         gradient_interpolated = f_prime(psi[i])
         term_1 = transpose_par(gradient_interpolated)
 
+        # Retrieve the effective gain and N_eff to normalize the gradient before transposing back
         g_eff_A, n_eff_A = get_effective_gain(sca_a)
+        print('G_eff, N_eff nonzero check: ', np.nonzero(g_eff_A), np.nonzero(n_eff_A))
         gradient_interpolated = gradient_interpolated / g_eff_A / n_eff_A
 
         for j, sca_b in enumerate(all_scas):
@@ -494,6 +510,7 @@ def residual_function(psi, f_prime):
 
 
 def linear_search(p, direction, f):
+    print('Starting linear search')
     alpha = 0.1  # Step size
     p.params = p.params + alpha * direction
     best_epsilon, best_psi= cost_function(p, f)
@@ -507,6 +524,7 @@ def linear_search(p, direction, f):
             p = new_p
             best_epsilon = new_epsilon
             best_psi = new_psi
+    print('Linear search complete')
     return p, best_psi
 
 
@@ -520,6 +538,7 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100):
     :param f_prime: derivative of f. KL: eventually f should dictate f prime
     :return:
     """
+    print('Starting conjugate gradient optimization')
     direction = np.copy(p.params)
     grad_prev = np.copy(p.params)
     t_start = time.time()
@@ -527,16 +546,19 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100):
     print('Hours in initial cost function: ', (time.time() - t_start)/3600)
     sys.stdout.flush()
 
-    for _ in range(max_iter):
+    for i in range(max_iter):
         t_start = time.time()
         grad = residual_function(psi, f_prime)
         print('Hours spent in residual function: ', (time.time() - t_start) / 3600)
         sys.stdout.flush()
 
-        if _ == 0:
+        if i == 0:
             norm_0 = np.linalg.norm(grad)
+        if i == max_iter:
+            final_iter = max_iter
 
         if np.linalg.norm(grad) < tol * norm_0:
+            final_iter = i
             break
 
         beta = np.square(grad) / np.square(grad_prev)
@@ -552,6 +574,7 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100):
         psi = psi_new
         grad_prev = grad
 
+    print('Conjugate gradient finished. Converged in', final_iter, 'iterations')
     return p
 
 
