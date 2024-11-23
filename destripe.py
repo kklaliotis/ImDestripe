@@ -293,12 +293,6 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
     cols = int(image_B.shape[1])
     num_coords = coords.shape[0] // 2
 
-    print("Just before C call:")
-    print(f"rows (Python): {rows}")
-    print(f"cols (Python): {cols}")
-    print(f"num_coords (Python): {num_coords}")
-    print(f"g_eff (Python): {image_B.g_eff}")
-
     sys.stdout.flush()
     sys.stderr.flush()
     pyimcom_croutines.bilinear_interpolation(image_B.image,
@@ -473,7 +467,7 @@ def cost_function(p, f):
 
        # J_A = J_A - params_mat_A # KL: I dont think this was right anyway. J contains the ds_params because it's made of destriped I's
         psi[i, :, :] = I_A.image - J_A_image
-        epsilon[i, :, :] = f(psi[i])
+        epsilon[i, :, :] = f(psi[i, :, :])
     return epsilon, psi
 
 
@@ -481,8 +475,9 @@ def residual_function(psi, f_prime):
     """
     Calculate the residuals.
     :param psi: the image difference array (I_A - J_A) (N_SCA, 4088, 4088)
-    :param f_prime:
-    :return:
+    :param f_prime: the function to be used to calculate the gradient.
+            in the future this should be set by default based on what you pass for f
+    :return: resids, a 2D array with one row per SCA and one col per image-row-parameter
     """
     resids = parameters('constant', 4088).params
     print('Residual calculation started')
@@ -495,7 +490,7 @@ def residual_function(psi, f_prime):
         file.close()
 
         # Calculate and then transpose the gradient of I_A-J_A
-        gradient_interpolated = f_prime(psi[i])
+        gradient_interpolated = f_prime(psi[i, :, :])
         term_1 = transpose_par(gradient_interpolated)
 
         # Retrieve the effective gain and N_eff to normalize the gradient before transposing back
@@ -534,7 +529,9 @@ def linear_search(p, direction, f):
     for i in range(1, 11):
         new_p.params = new_p.params + i * alpha * direction
         new_epsilon, new_psi = cost_function(new_p, f)
-        if new_epsilon < best_epsilon: # KL: Should this be a.any or a.all?
+
+        # KL: Should this be a.any or a.all? trying np.mean for now... nanmean in case of nans
+        if np.nanmean(new_epsilon) < np.nanmean(best_epsilon):
             p = new_p
             best_epsilon = new_epsilon
             best_psi = new_psi
