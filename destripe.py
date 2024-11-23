@@ -108,6 +108,7 @@ class sca_img:
     def apply_noise(self):
         """
         Add detector noise to self.image
+        KL to do: make an option to write out image of image + noise (for comparison fig)
         :return:
         """
         noiseframe = np.copy(fits.open(labnoise_prefix + self.obsid + '_' + self.scaid + '.fits')['PRIMARY'].data)
@@ -152,10 +153,53 @@ class sca_img:
         ra, dec = wcs.all_pix2world(x_flat, y_flat, 0)  # 0 is for the first frame (1-indexed)
         return ra, dec
 
-    # def close(self):
-    #     del self.image
-    #     del self.g_eff
+     def make_interpolated(self):
+        """
+        Construct an version of this SCA interpolated from other, overlapping ones.
+        :return:
+        """
+        this_interp = np.zeros(self.shape)
+        N_eff = np.memmap(tempfile + self.obsid + '_' + self.scaid + '_Neff.dat', dtype='float32', mode='w+', shape=I_A.shape)
+        t_a_start = time.time()
+        print('Starting interpolation for SCA' + self.obsid + '_' + self.scaid)
+        print('Time: ', t_a_start)
+        print('Image A Checks: Image nonzero, G_eff nonzero', np.nonzero(I_A.image), np.nonzero(I_A.g_eff))
+        sys.stdout.flush()
 
+        N_BinA = 0
+
+        for j, sca_b in enumerate(all_scas):
+            m = re.search(r'_(\d+)_(\d+)', sca_b)
+            obsid_B = m.group(1)
+            scaid_B = m.group(2)
+
+            if obsid_B != obsid_A and ov_mat[i, j] != 0:  # Check if this sca_b overlaps sca_a
+                print('Image B: ' + obsid_B + '_' + scaid_B)
+                N_BinA += 1
+                I_B = sca_img(obsid_B, scaid_B)
+                I_B.apply_noise()
+                I_B.apply_permanent_mask()
+                I_B.apply_object_mask()
+                B_interp = np.zeros_like(self.image)
+                print('Image B Checks: Image nonzero, G_eff nonzero', np.nonzero(I_B.image)[0],
+                      np.nonzero(I_B.g_eff)[0])
+                interpolate_image_bilinear(I_B, I_A, B_interp)
+                this_interp += B_interp
+                N_eff += I_B.mask
+
+        print('Interpolation done. Number of contributing SCAs: ', N_BinA)
+
+        header =self.w.to_header()
+        this_interp = np.divide(this_interp, N_eff)
+        this_interp = np.divide(this_interp, self.g_eff)
+        hdu = fits.PrimaryHDU(this_interp, header=header)
+        hdu.writeto(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits', overwrite=True)
+        print(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits created \n')
+        t_elapsed_a = time.time() - t_a_start
+        print('Hours to generate this interpolation: ', t_elapsed_a / 3600)
+
+        del N_eff
+        return this_interp
 
 class parameters:
     """
@@ -350,9 +394,13 @@ else:
                                              verbose=True)  # an N_wcs x N_wcs matrix containing fractional overlap
     print("Overlap matrix complete. Duration: ", (time.time() - ovmat_t0) / 3600, 'hours')
 
-# Iterate through all the SCAs and create interpolated
-# versions of them from all the other SCAs that overlap them
+
 def make_interpolated_images():
+    """
+    Iterate through all the SCAs and create interpolated
+    versions of them from all the other SCAs that overlap them
+    :return: None
+    """
     for i, sca_a in enumerate(all_scas):
         m = re.search(r'_(\d+)_(\d+)', sca_a)
         obsid_A = m.group(1)
@@ -363,46 +411,7 @@ def make_interpolated_images():
         I_A.apply_permanent_mask()
         I_A.apply_object_mask()
 
-        I_A_interp = np.zeros(I_A.shape)
-        N_eff = np.memmap(tempfile + obsid_A + '_' + scaid_A + '_Neff.dat', dtype='float32', mode='w+', shape=I_A.shape)
-        t_a_start = time.time()
-        print('Starting interpolation for SCA A. Time: ', t_a_start)
-        print('Image A Checks: Image nonzero, G_eff nonzero', np.nonzero(I_A.image)[0], np.nonzero(I_A.g_eff)[0])
-        sys.stdout.flush()
-
-        N_BinA = 0
-        for j, sca_b in enumerate(all_scas):
-            m = re.search(r'_(\d+)_(\d+)', sca_b)
-            obsid_B = m.group(1)
-            scaid_B = m.group(2)
-
-            if obsid_B != obsid_A and ov_mat[i, j] != 0: # Check if this sca_b overlaps sca_a
-                print('Image B: '+ obsid_B + '_' + scaid_B)
-                N_BinA+=1
-                I_B = sca_img(obsid_B, scaid_B)
-                I_B.apply_noise()
-                I_B.apply_permanent_mask()
-                I_B.apply_object_mask()
-                interpolated_image = np.zeros_like(I_A.image)
-                print('Image B Checks: Image nonzero, G_eff nonzero', np.nonzero(I_B.image)[0],
-                      np.nonzero(I_B.g_eff)[0])
-                interpolate_image_bilinear(I_B, I_A, interpolated_image)
-                I_A_interp += interpolated_image
-                N_eff += I_B.mask
-
-        print('A interpolation done. Number of contributing SCAs: ', N_BinA)
-
-        header = I_A.w.to_header()
-        I_A_interp = np.divide(I_A_interp, N_eff)
-        I_A_interp = np.divide(I_A_interp, I_A.g_eff)
-        hdu = fits.PrimaryHDU(I_A_interp, header=header)
-        hdu.writeto(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits', overwrite=True)
-        print(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits created \n')
-        t_elapsed_a = time.time() - t_a_start
-        print('Hours to generate this interpolation: ', t_elapsed_a/3600)
-        print('Remaining SCAs: ' + str(len(all_scas) - 1 - i) + '\n')
-
-        del N_eff
+        I_A.make_interpolated()
 
 
 # Function options. KL: Could move these to another .py file and call them as modules?
@@ -457,15 +466,13 @@ def cost_function(p, f):
         I_A.apply_permanent_mask()
         I_A.apply_object_mask()
 
-        params_mat_A = p.forward_par(i)
-        I_current = I_A.image - params_mat_A
+        params_mat_A = p.forward_par(i) # Make destriping params into an image
+        I_A.image = I_A.image - params_mat_A # Update I_A.image to have the params image subtracted off
 
-        if i == 0:
-            make_interpolated_images()
+        J_A_image = I_A.make_interpolated() # make_interpoalted uses I_A.image so I think this should have the params off
 
-        J_A = sca_img(obsid_A, scaid_A, interpolated=True)
-        J_current = J_A.image - params_mat_A
-        psi[i, :, :] = I_current - J_current
+       # J_A = J_A - params_mat_A # KL: I dont think this was right anyway. J contains the ds_params because it's made of destriped I's
+        psi[i, :, :] = I_A.image - J_A_image
         epsilon[i, :, :] = f(psi[i])
     return epsilon, psi
 
@@ -499,7 +506,6 @@ def residual_function(psi, f_prime):
 
         for j, sca_b in enumerate(all_scas):
             obsid_B, scaid_B = get_ids(sca_b)
-            #g_eff_B = get_effective_gain(sca_a)[0]
 
             if obsid_B != obsid_A and ov_mat[i, j] != 0:
                 I_B = sca_img(obsid_B, scaid_B)
@@ -528,7 +534,7 @@ def linear_search(p, direction, f):
     for i in range(1, 11):
         new_p.params = new_p.params + i * alpha * direction
         new_epsilon, new_psi = cost_function(new_p, f)
-        if new_epsilon < best_epsilon:
+        if new_epsilon < best_epsilon: # KL: Should this be a.any or a.all?
             p = new_p
             best_epsilon = new_epsilon
             best_psi = new_psi
