@@ -160,6 +160,7 @@ class sca_img:
         """
         this_interp = np.zeros(self.shape)
         N_eff = np.memmap(tempfile + self.obsid + '_' + self.scaid + '_Neff.dat', dtype='float32', mode='w+', shape=self.shape)
+        #N_eff += 1 #so that theres no div by zero??? but this doesnt really make sense? I guess the zeros would be 0/0 so maybe that's okay
         t_a_start = time.time()
         print('Starting interpolation for SCA' + self.obsid + '_' + self.scaid)
         print('Time: ', t_a_start)
@@ -405,6 +406,8 @@ def make_interpolated_images():
 
         I_A.make_interpolated(i)
 
+        print('SCAs remaining: ', len(all_scas)-i)
+
 
 # Function options. KL: Could move these to another .py file and call them as modules?
 # import functions and then function.quadratic etc.
@@ -446,6 +449,7 @@ def cost_function(p, f):
     f: keyword for function dictionary options; should also set an f_prime
     """
     print('Initializing cost function')
+    t0_cost = time.time()
     psi = np.zeros((len(all_scas), 4088, 4088))
     epsilon = np.copy(psi)
 
@@ -466,6 +470,7 @@ def cost_function(p, f):
        # J_A = J_A - params_mat_A # KL: I dont think this was right anyway. J contains the ds_params because it's made of destriped I's
         psi[i, :, :] = I_A.image - J_A_image
         epsilon[i, :, :] = f(psi[i, :, :])
+    print('Ending cost function. Hours elapsed: ', (time.time()-t0_cost)/3600)
     return epsilon, psi
 
 
@@ -503,12 +508,12 @@ def residual_function(psi, f_prime):
             if obsid_B != obsid_A and ov_mat[i, j] != 0:
                 I_B = sca_img(obsid_B, scaid_B)
                 gradient_original = np.zeros(I_B.shape)
-                print('Just before transpose interpolation (C) for: '+obsid_B+'_'+scaid_B)
+                # print('Just before transpose interpolation (C) for: '+obsid_B+'_'+scaid_B)
                 transpose_interpolate(gradient_interpolated, wcs_A, I_B, gradient_original)
-                print('Just after transpose interpolation (C)')
+                # print('Just after transpose interpolation (C)')
                 gradient_original *= I_B.g_eff
                 term_2 = transpose_par(gradient_original)
-                print('Just after transpose interpolation of parameters')
+                # print('Just after transpose interpolation of parameters')
                 resids[j,:] += term_2
 
         resids[i, :] -= term_1
@@ -520,11 +525,12 @@ def linear_search(p, direction, f):
     print('Starting linear search')
     alpha = 0.1  # Step size
     p.params = p.params + alpha * direction
-    best_epsilon, best_psi= cost_function(p, f)
+    best_epsilon, best_psi = cost_function(p, f)
 
     # Simple linear search
     new_p = parameters('constant', 4088)
     for i in range(1, 11):
+        t0_ls_iter = time.time()
         new_p.params = new_p.params + i * alpha * direction
         new_epsilon, new_psi = cost_function(new_p, f)
 
@@ -533,7 +539,11 @@ def linear_search(p, direction, f):
             p = new_p
             best_epsilon = new_epsilon
             best_psi = new_psi
-    print('Linear search complete')
+        else:
+            break
+        print('Linear search iteration ', i, ' finished in ', (time.time()-t0_ls_iter)/3600, 'hours')
+
+    print('Linear search complete in: ', i, 'iterations')
     return p, best_psi
 
 
@@ -556,17 +566,21 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100):
     sys.stdout.flush()
 
     for i in range(max_iter):
-        t_start = time.time()
+        print("CG Iteration: ", i)
+        t_start_CG_iter = time.time()
         grad = residual_function(psi, f_prime)
-        print('Hours spent in residual function: ', (time.time() - t_start) / 3600)
+        print('Hours spent in residual function: ', (time.time() - t_start_CG_iter) / 3600)
         sys.stdout.flush()
+
+        current_norm = np.linalg.norm(grad)
 
         if i == 0:
             norm_0 = np.linalg.norm(grad)
+            tol = tol * norm_0
         if i == max_iter:
             final_iter = max_iter
 
-        if np.linalg.norm(grad) < tol * norm_0:
+        if current_norm < tol:
             final_iter = i
             break
 
@@ -576,12 +590,15 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100):
         # Perform linear search
         t_start = time.time()
         p_new, psi_new= linear_search(p, direction, f)
-        print('Hours spent in residual function: ', (time.time() - t_start) / 3600)
-        sys.stdout.flush()
+        print('Hours spent in linear search: ', (time.time() - t_start) / 3600)
+        print('Current norm: ', current_norm, 'Tol * Norm_0: ', tol, 'Difference (CN-TOL): ', current_norm - tol)
 
         p = p_new
         psi = psi_new
         grad_prev = grad
+
+        print('Hours spent in this CG iteration: ', time.time()-t_start_CG_iter)
+        sys.stdout.flush()
 
     print('Conjugate gradient finished. Converged in', final_iter, 'iterations')
     return p
