@@ -164,7 +164,7 @@ class sca_img:
         t_a_start = time.time()
         print('Starting interpolation for SCA' + self.obsid + '_' + self.scaid)
         print('Time: ', t_a_start)
-        print('Image A Checks: Image nonzero, G_eff nonzero', np.nonzero(self.image), np.nonzero(self.g_eff))
+        # print('Image A Checks: Image nonzero, G_eff nonzero', np.nonzero(self.image), np.nonzero(self.g_eff))
         sys.stdout.flush()
 
         N_BinA = 0
@@ -180,8 +180,8 @@ class sca_img:
                 I_B.apply_permanent_mask()
                 I_B.apply_object_mask()
                 B_interp = np.zeros_like(self.image)
-                print('Image B Checks: Image nonzero, G_eff nonzero', np.nonzero(I_B.image)[0],
-                      np.nonzero(I_B.g_eff)[0])
+                # print('Image B Checks: Image nonzero, G_eff nonzero', np.nonzero(I_B.image)[0],
+                  #    np.nonzero(I_B.g_eff)[0])
                 interpolate_image_bilinear(I_B, self, B_interp)
                 this_interp += B_interp
                 N_eff += I_B.mask
@@ -498,8 +498,8 @@ def residual_function(psi, f_prime):
 
         # Retrieve the effective gain and N_eff to normalize the gradient before transposing back
         g_eff_A, n_eff_A = get_effective_gain(sca_a)
-        print('SCA A', obsid_A, scaid_A, 'G_eff, N_eff retrieved nonzero check: ',
-              np.nonzero(g_eff_A)[0], np.nonzero(n_eff_A)[0])
+       # print('SCA A', obsid_A, scaid_A, 'G_eff, N_eff retrieved nonzero check: ',
+           #   np.nonzero(g_eff_A)[0], np.nonzero(n_eff_A)[0])
         gradient_interpolated = gradient_interpolated / g_eff_A / n_eff_A
 
         for j, sca_b in enumerate(all_scas):
