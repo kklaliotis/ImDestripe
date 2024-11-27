@@ -290,7 +290,7 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
     """
 
     x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_A.w, image_B.w, pad=0)
-    coords = np.column_stack((x_target, y_target)).flatten().astype(np.float32)
+    coords = np.column_stack((x_target.ravel(), y_target.ravel())).flatten().astype(np.float32)
 
     # Verify data just before C call
     rows = int(image_B.shape[0])
@@ -513,9 +513,8 @@ def residual_function(psi, f_prime):
 
         # Retrieve the effective gain and N_eff to normalize the gradient before transposing back
         g_eff_A, n_eff_A = get_effective_gain(sca_a)
-        # print('SCA A', obsid_A, scaid_A, 'G_eff, N_eff retrieved nonzero check: ',
-            # np.nonzero(g_eff_A)[0], np.nonzero(n_eff_A)[0])
-        gradient_interpolated = gradient_interpolated / g_eff_A / n_eff_A
+        # print('SCA A', obsid_A, scaid_A, 'G_eff, N_eff retrieved nonzero check: ', np.all(g_eff_A), np.all(n_eff_A))
+        gradient_interpolated = np.where(n_eff_A != 0, gradient_interpolated / g_eff_A / n_eff_A, 0)
 
         for j, sca_b in enumerate(all_scas):
             obsid_B, scaid_B = get_ids(sca_b)
@@ -599,7 +598,7 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
             final_iter = i
             break
 
-        beta = np.square(grad) / np.square(grad_prev)
+        beta = np.where(grad_prev != 0, np.square(grad) / np.square(grad_prev), 0)
         direction = -grad + beta * direction
 
         # Perform linear search
