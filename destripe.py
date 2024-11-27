@@ -184,6 +184,8 @@ class sca_img:
         print(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits created \n')
         t_elapsed_a = time.time() - t_a_start
         print('Hours to generate this interpolation: ', t_elapsed_a / 3600)
+        if self.obsid=='670' and self.scaid=='10':
+            print('N_eff:', N_eff)
 
         del N_eff
         return this_interp
@@ -514,7 +516,10 @@ def residual_function(psi, f_prime):
         # Retrieve the effective gain and N_eff to normalize the gradient before transposing back
         g_eff_A, n_eff_A = get_effective_gain(sca_a)
         # print('SCA A', obsid_A, scaid_A, 'G_eff, N_eff retrieved nonzero check: ', np.all(g_eff_A), np.all(n_eff_A))
-        gradient_interpolated = np.where(n_eff_A != 0, gradient_interpolated / g_eff_A / n_eff_A, 0)
+        valid_mask = n_eff_A != 0
+        gradient_interpolated[valid_mask] = gradient_interpolated[valid_mask] / (
+                    g_eff_A[valid_mask] * n_eff_A[valid_mask])
+        gradient_interpolated[~valid_mask] = 0
 
         for j, sca_b in enumerate(all_scas):
             obsid_B, scaid_B = get_ids(sca_b)
@@ -598,7 +603,7 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
             final_iter = i
             break
 
-        beta = np.where(grad_prev != 0, np.square(grad) / np.square(grad_prev), 0)
+        beta = np.square(grad) / np.square(grad_prev)
         direction = -grad + beta * direction
 
         # Perform linear search
