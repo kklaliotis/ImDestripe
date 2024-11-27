@@ -299,7 +299,7 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
 
     sys.stdout.flush()
     sys.stderr.flush()
-    if mask:
+    if mask is not None and isinstance(mask, np.ndarray):
         mask_geff = np.ones_like(image_A.image)
         pyimcom_croutines.bilinear_interpolation(mask,
                                                  mask_geff,
