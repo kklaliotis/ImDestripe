@@ -12,6 +12,7 @@ import ctypes
 import numpy as np
 from astropy.io import fits
 from astropy import wcs
+from scipy.signal import convolve2d
 from utils import compareutils
 import re
 import sys
@@ -60,12 +61,11 @@ class sca_img:
         image: the SCA image (4088x4088)
         shape: shape of the image
         w: the astropy.wcs object associated with this SCA
-        mask: the full pixel mask that is used on this image. Is correct only after running BOTH apply mask methods
+        mask: the full pixel mask that is used on this image. Is correct only after calling apply_permanent_mask
         g_eff : effective gain in each pixel of the image
     Functions:
     apply_noise: apply the appropriate lab noise frame to the SCA image
     apply_permanent_mask: apply the SCA permanent pixel mask to the image
-    apply_object_mask: mask out bright objects from the image
     """
 
     def __init__(self, obsid, scaid, interpolated=False):
@@ -125,19 +125,6 @@ class sca_img:
         self.mask = self.mask * pm
         return self.image
 
-    def apply_object_mask(self):
-        """
-        Apply bright object mask. updates self.image and self.mask
-        :return:
-        """
-        median = np.median(self.image)
-        for i in range(self.shape[0]):
-            for j in range(self.shape[1]):
-                if self.image[i, j] >= 1.5 * median:
-                    self.image[i - 2:i + 2, j - 2:j + 2] = 0
-                    self.mask[i - 2:i + 2, j - 2:j + 2] = 0
-        return self.image
-
     def get_coordinates(self, pad=0):
         """
         create an array of ra, dec coords for the image
@@ -160,7 +147,6 @@ class sca_img:
         """
         this_interp = np.zeros(self.shape)
         N_eff = np.memmap(tempfile + self.obsid + '_' + self.scaid + '_Neff.dat', dtype='float32', mode='w+', shape=self.shape)
-        #N_eff += 1 #so that theres no div by zero??? but this doesnt really make sense? I guess the zeros would be 0/0 so maybe that's okay
         t_a_start = time.time()
         print('Starting interpolation for SCA' + self.obsid + '_' + self.scaid)
         print('Time: ', t_a_start)
@@ -177,19 +163,21 @@ class sca_img:
                 N_BinA += 1
                 I_B = sca_img(obsid_B, scaid_B)
                 I_B.apply_noise()
-                I_B.apply_permanent_mask()
-                I_B.apply_object_mask()
+                I_B.apply_permanent_mask() # now I_B.mask is the permanent mask
+                # I_B.apply_object_mask() # KL took this out bc I think we want to do this after interpolation actually
                 B_interp = np.zeros_like(self.image)
+                B_mask_interp = np.zeros_like(self.image)
                 # print('Image B Checks: Image nonzero, G_eff nonzero', np.nonzero(I_B.image)[0],
                   #    np.nonzero(I_B.g_eff)[0])
                 interpolate_image_bilinear(I_B, self, B_interp)
+                interpolate_image_bilinear(I_B, self, B_mask_interp, mask=I_B.mask) # interpolate B pixel mask onto A grid
                 this_interp += B_interp
-                N_eff += I_B.mask
+                N_eff += B_mask_interp
 
         print('Interpolation done. Number of contributing SCAs: ', N_BinA)
-
+        new_mask = N_eff > 10**-12
+        np.where(new_mask, this_interp/np.where(new_mask, N_eff, 10**-12), 0) # only do the division where N_eff nonzero
         header =self.w.to_header()
-        this_interp = np.divide(this_interp, N_eff)
         this_interp = np.divide(this_interp, self.g_eff)
         hdu = fits.PrimaryHDU(this_interp, header=header)
         hdu.writeto(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits', overwrite=True)
@@ -273,14 +261,31 @@ def get_scas(filter, prefix):
     write_to_file('N SCA images in this mosaic: ' + str(n_scas))
     return all_scas, all_wcs
 
-def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
+def apply_object_mask(image):
+    """
+    Apply bright object mask to an image.
+    :param image: a 2D numpy array image.
+    :return: the image with bright objects (flux>1.5*median; could modify later) masked out
+    """
+    # Create a binary mask for high-value pixels (KL: could modify later)
+    high_value_mask = image >= 1.5 * np.median(image)
+
+    # Convolve the binary mask with a 5x5 kernel to include neighbors
+    kernel = np.ones((5, 5), dtype=int)
+    neighbor_mask = convolve2d(high_value_mask, kernel, mode='same') > 0
+
+    # Set the target pixels and their neighbors to zero
+    image = np.where(neighbor_mask, 0, image)
+    return image
+
+def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
     """
     Interpolate values from a "reference" SCA image onto a "target" SCA coordinate grid
     Uses pyimcom_croutines.bilinear_interpolation(float* image, float* g_eff, int rows, int cols, float* coords,
                                                     int num_coords, float* interpolated_image)
     :param image_B : an SCA object of the image to be interpolated
     :param image_A : an SCA object of the image whose grid you are interpolating B onto
-    :param interpolated_image_B : an ndarray of zeros with shape of Image A.
+    :param interpolated_image : an ndarray of zeros with shape of Image A.
     interpolated_image_B is updated in-place.
     """
 
@@ -294,12 +299,20 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image_B):
 
     sys.stdout.flush()
     sys.stderr.flush()
+    if mask:
+        mask_geff = np.ones_like(image_A.image)
+        pyimcom_croutines.bilinear_interpolation(mask,
+                                                 mask_geff,
+                                                 rows, cols,
+                                                 coords,
+                                                 num_coords,
+                                                 interpolated_image)
     pyimcom_croutines.bilinear_interpolation(image_B.image,
                                              image_B.g_eff,
                                              rows, cols,
                                              coords,
                                              num_coords,
-                                             interpolated_image_B)
+                                             interpolated_image)
 
     sys.stdout.flush()
     sys.stderr.flush()
@@ -402,7 +415,8 @@ def make_interpolated_images():
         I_A = sca_img(obsid_A, scaid_A)
         I_A.apply_noise()
         I_A.apply_permanent_mask()
-        I_A.apply_object_mask()
+        # I_A.apply_object_mask() # KL: I think I don't want to apply the object mask until I compute psi_A
+        # KL sidenote I also dont think it matters at this stage whether I_A has been masked
 
         I_A.make_interpolated(i)
 
@@ -451,7 +465,7 @@ def cost_function(p, f):
     print('Initializing cost function')
     t0_cost = time.time()
     psi = np.zeros((len(all_scas), 4088, 4088))
-    epsilon = np.copy(psi)
+    epsilon = 0
 
     for i, sca_a in enumerate(all_scas):
         m = re.search(r'_(\d+)_(\d+)', sca_a)
@@ -459,17 +473,18 @@ def cost_function(p, f):
         scaid_A = m.group(2)
         I_A = sca_img(obsid_A, scaid_A)
         I_A.apply_noise()
-        I_A.apply_permanent_mask()
-        I_A.apply_object_mask()
 
-        params_mat_A = p.forward_par(i) # Make destriping params into an image
-        I_A.image = I_A.image - params_mat_A # Update I_A.image to have the params image subtracted off
+        params_mat_A = p.forward_par(i)  # Make destriping params into an image
+        I_A.image = I_A.image - params_mat_A  # Update I_A.image to have the params image subtracted off
+        I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
+        apply_object_mask(I_A.image)
 
-        J_A_image = I_A.make_interpolated(i) # make_interpoalted uses I_A.image so I think this should have the params off
+        J_A_image = I_A.make_interpolated(i)  # make_interpoalted uses I_A.image so I think this I_A has the params off
+        J_A_image *= I_A.mask # apply permanent mask from A
+        apply_object_mask(J_A_image)
 
-       # J_A = J_A - params_mat_A # KL: I dont think this was right anyway. J contains the ds_params because it's made of destriped I's
         psi[i, :, :] = I_A.image - J_A_image
-        epsilon[i, :, :] = f(psi[i, :, :])
+        epsilon += np.sum(f(psi[i, :, :]))
     print('Ending cost function. Hours elapsed: ', (time.time()-t0_cost)/3600)
     return epsilon, psi
 
@@ -484,28 +499,28 @@ def residual_function(psi, f_prime):
     """
     resids = parameters('constant', 4088).params
     print('Residual calculation started')
-    for i, sca_a in enumerate(all_scas):
+    for k, sca_a in enumerate(all_scas):
 
         # Go and get the WCS object for image A
-        obsid_A , scaid_A = get_ids(sca_a)
+        obsid_A, scaid_A = get_ids(sca_a)
         file = fits.open(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits')
         wcs_A = wcs.WCS(file[0].header)
         file.close()
 
         # Calculate and then transpose the gradient of I_A-J_A
-        gradient_interpolated = f_prime(psi[i, :, :])
+        gradient_interpolated = f_prime(psi[k, :, :])
         term_1 = transpose_par(gradient_interpolated)
 
         # Retrieve the effective gain and N_eff to normalize the gradient before transposing back
         g_eff_A, n_eff_A = get_effective_gain(sca_a)
-       # print('SCA A', obsid_A, scaid_A, 'G_eff, N_eff retrieved nonzero check: ',
-           #   np.nonzero(g_eff_A)[0], np.nonzero(n_eff_A)[0])
+        # print('SCA A', obsid_A, scaid_A, 'G_eff, N_eff retrieved nonzero check: ',
+            # np.nonzero(g_eff_A)[0], np.nonzero(n_eff_A)[0])
         gradient_interpolated = gradient_interpolated / g_eff_A / n_eff_A
 
         for j, sca_b in enumerate(all_scas):
             obsid_B, scaid_B = get_ids(sca_b)
 
-            if obsid_B != obsid_A and ov_mat[i, j] != 0:
+            if obsid_B != obsid_A and ov_mat[k, j] != 0:
                 I_B = sca_img(obsid_B, scaid_B)
                 gradient_original = np.zeros(I_B.shape)
                 # print('Just before transpose interpolation (C) for: '+obsid_B+'_'+scaid_B)
@@ -516,45 +531,45 @@ def residual_function(psi, f_prime):
                 # print('Just after transpose interpolation of parameters')
                 resids[j,:] += term_2
 
-        resids[i, :] -= term_1
+        resids[k, :] -= term_1
     print('Residuals calculation finished')
     return resids
 
 
-def linear_search(p, direction, f):
+def linear_search(p, direction, f, alpha=0.1):
     print('Starting linear search')
-    alpha = 0.1  # Step size
+    # alpha = 0.1  # Step size
     p.params = p.params + alpha * direction
     best_epsilon, best_psi = cost_function(p, f)
 
     # Simple linear search
     new_p = parameters('constant', 4088)
-    for i in range(1, 11):
+    for k in range(1, 11):
         t0_ls_iter = time.time()
-        new_p.params = new_p.params + i * alpha * direction
+        new_p.params = new_p.params + k * alpha * direction
         new_epsilon, new_psi = cost_function(new_p, f)
 
-        # KL: Should this be a.any or a.all? trying np.mean for now... nanmean in case of nans
-        if np.nanmean(new_epsilon) < np.nanmean(best_epsilon):
+        if new_epsilon < best_epsilon:
             p = new_p
             best_epsilon = new_epsilon
             best_psi = new_psi
         else:
             break
-        print('Linear search iteration ', i, ' finished in ', (time.time()-t0_ls_iter)/3600, 'hours')
+        print('Linear search iteration ', k, ' finished in ', (time.time() - t0_ls_iter) / 3600, 'hours')
 
-    print('Linear search complete in: ', i, 'iterations')
+    print('Linear search complete in: ', k, 'iterations')
     return p, best_psi
 
 
 # Conjugate Gradient Descent
-def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100):
+def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
     """
     :param p: p is a parameters object
     :param tol:
     :param max_iter:
     :param f: function to use for cost function
     :param f_prime: derivative of f. KL: eventually f should dictate f prime
+    :param alpha: magnitude of direction steps to take in linear search function
     :return:
     """
     print('Starting conjugate gradient optimization')
@@ -589,9 +604,10 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100):
 
         # Perform linear search
         t_start = time.time()
-        p_new, psi_new= linear_search(p, direction, f)
+        p_new, psi_new= linear_search(p, direction, f, alpha=alpha)
         print('Hours spent in linear search: ', (time.time() - t_start) / 3600)
         print('Current norm: ', current_norm, 'Tol * Norm_0: ', tol, 'Difference (CN-TOL): ', current_norm - tol)
+        print('Current d_cost/d_direction_depth: ', alpha * np.sum(grad*direction))
 
         p = p_new
         psi = psi_new
