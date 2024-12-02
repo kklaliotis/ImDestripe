@@ -263,22 +263,26 @@ def get_scas(filter, prefix):
     write_to_file('N SCA images in this mosaic: ' + str(n_scas))
     return all_scas, all_wcs
 
-def apply_object_mask(image):
+def apply_object_mask(image, mask=None):
     """
-    Apply bright object mask to an image.
-    :param image: a 2D numpy array image.
+    Apply a bright object mask to an image.
+    :param image: 2D numpy array, the image to be masked.
+    :param mask: optional: 2D numpy array, the pre-existing object mask you wish to use
     :return: the image with bright objects (flux>1.5*median; could modify later) masked out
     """
-    # Create a binary mask for high-value pixels (KL: could modify later)
-    high_value_mask = image >= 1.5 * np.median(image)
+    if mask is not None and isinstance(mask, np.ndarray):
+        neighbor_mask = mask
+    else:
+        # Create a binary mask for high-value pixels (KL: could modify later)
+        high_value_mask = image >= 1.5 * np.median(image)
 
-    # Convolve the binary mask with a 5x5 kernel to include neighbors
-    kernel = np.ones((5, 5), dtype=int)
-    neighbor_mask = convolve2d(high_value_mask, kernel, mode='same') > 0
+        # Convolve the binary mask with a 5x5 kernel to include neighbors
+        kernel = np.ones((5, 5), dtype=int)
+        neighbor_mask = convolve2d(high_value_mask, kernel, mode='same') > 0
 
     # Set the target pixels and their neighbors to zero
     image = np.where(neighbor_mask, 0, image)
-    return image
+    return neighbor_mask
 
 def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
     """
@@ -480,11 +484,11 @@ def cost_function(p, f):
         params_mat_A = p.forward_par(i)  # Make destriping params into an image
         I_A.image = I_A.image - params_mat_A  # Update I_A.image to have the params image subtracted off
         I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
-        apply_object_mask(I_A.image)
+        object_mask = apply_object_mask(I_A.image)
 
         J_A_image = I_A.make_interpolated(i)  # make_interpolated uses I_A.image so I think this I_A has the params off
         J_A_image *= I_A.mask # apply permanent mask from A
-        apply_object_mask(J_A_image)
+        apply_object_mask(J_A_image, mask=object_mask)
 
         psi[i, :, :] = I_A.image - J_A_image
         epsilon += np.sum(f(psi[i, :, :]))
