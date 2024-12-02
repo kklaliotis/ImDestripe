@@ -590,7 +590,7 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
     sys.stdout.flush()
 
     for i in range(max_iter):
-        print("CG Iteration: ", i)
+        print("CG Iteration: ", i+1)
         t_start_CG_iter = time.time()
         grad = residual_function(psi, f_prime)
         print('Hours spent in residual function: ', (time.time() - t_start_CG_iter) / 3600)
