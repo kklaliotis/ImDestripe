@@ -17,7 +17,6 @@ from utils import compareutils
 import re
 import sys
 import pyimcom_croutines
-import pkgutil
 
 # KL: Placeholders, some of these should be input arguments or in a config or something
 #input_dir = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/simple/'
@@ -121,9 +120,8 @@ class sca_img:
         :return:
         """
         pm = np.copy(fits.open(permanent_mask)[0].data[int(self.scaid) - 1])
-        self.image = self.image * pm
-        self.mask = self.mask * pm
-        return self.image
+        self.image *= pm
+        self.mask *= pm
 
     def get_coordinates(self, pad=0):
         """
@@ -135,6 +133,8 @@ class sca_img:
         h = self.shape[0] + pad
         w = self.shape[1] + pad
         x_i, y_i = np.meshgrid(np.arange(h), np.arange(w))
+        x_i -= pad / 2.
+        y_i -= pad / 2.
         x_flat = x_i.flatten()
         y_flat = y_i.flatten()
         ra, dec = wcs.all_pix2world(x_flat, y_flat, 0)  # 0 is for the first frame (1-indexed)
@@ -149,7 +149,7 @@ class sca_img:
         N_eff = np.memmap(tempfile + self.obsid + '_' + self.scaid + '_Neff.dat', dtype='float32', mode='w+', shape=self.shape)
         t_a_start = time.time()
         print('Starting interpolation for SCA' + self.obsid + '_' + self.scaid)
-        print('Time: ', t_a_start)
+        # print('Time: ', t_a_start)
         # print('Image A Checks: Image nonzero, G_eff nonzero', np.nonzero(self.image), np.nonzero(self.g_eff))
         sys.stdout.flush()
 
@@ -160,6 +160,7 @@ class sca_img:
 
             if obsid_B != self.obsid and ov_mat[ind, j] != 0:  # Check if this sca_b overlaps sca_a
                 print('Image B: ' + obsid_B + '_' + scaid_B)
+                this_j = str(j)
                 N_BinA += 1
                 I_B = sca_img(obsid_B, scaid_B)
                 I_B.apply_noise()
@@ -174,9 +175,10 @@ class sca_img:
                 this_interp += B_interp
                 N_eff += B_mask_interp
 
+
         print('Interpolation done. Number of contributing SCAs: ', N_BinA)
         new_mask = N_eff > 10**-12
-        np.where(new_mask, this_interp/np.where(new_mask, N_eff, 10**-12), 0) # only do the division where N_eff nonzero
+        this_interp = np.where(new_mask, this_interp/np.where(new_mask, N_eff, 10**-12), 0) # only do the division where N_eff nonzero
         header =self.w.to_header()
         this_interp = np.divide(this_interp, self.g_eff)
         hdu = fits.PrimaryHDU(this_interp, header=header)
@@ -184,8 +186,6 @@ class sca_img:
         print(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits created \n')
         t_elapsed_a = time.time() - t_a_start
         print('Hours to generate this interpolation: ', t_elapsed_a / 3600)
-        if self.obsid=='670' and self.scaid=='10':
-            print('N_eff:', N_eff)
 
         del N_eff
         return this_interp
@@ -309,7 +309,8 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
                                                  coords,
                                                  num_coords,
                                                  interpolated_image)
-    pyimcom_croutines.bilinear_interpolation(image_B.image,
+    else:
+        pyimcom_croutines.bilinear_interpolation(image_B.image,
                                              image_B.g_eff,
                                              rows, cols,
                                              coords,
@@ -318,7 +319,6 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
 
     sys.stdout.flush()
     sys.stderr.flush()
-    print('Just after croutine call')
 
 
 def transpose_interpolate( image_A, wcs_A, image_B, original_image):
@@ -418,7 +418,8 @@ def make_interpolated_images():
         I_A.apply_noise()
         I_A.apply_permanent_mask()
         # I_A.apply_object_mask() # KL: I think I don't want to apply the object mask until I compute psi_A
-        # KL sidenote I also dont think it matters at this stage whether I_A has been masked
+        # KL sidenote I also dont think it matters at this stage whether I_A has been masked ? or whether noise is there?
+        # like I think I could take out apply noise and apply permanent mask here.
 
         I_A.make_interpolated(i)
 
@@ -481,7 +482,7 @@ def cost_function(p, f):
         I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
         apply_object_mask(I_A.image)
 
-        J_A_image = I_A.make_interpolated(i)  # make_interpoalted uses I_A.image so I think this I_A has the params off
+        J_A_image = I_A.make_interpolated(i)  # make_interpolated uses I_A.image so I think this I_A has the params off
         J_A_image *= I_A.mask # apply permanent mask from A
         apply_object_mask(J_A_image)
 
@@ -603,7 +604,10 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
             final_iter = i
             break
 
-        beta = np.square(grad) / np.square(grad_prev)
+        beta = np.zeros_like(direction)
+        valid_mask = grad_prev != 0
+        beta[valid_mask] = np.square(grad)[valid_mask] / np.square(grad_prev)[valid_mask]
+        # KL check this with Chris
         direction = -grad + beta * direction
 
         # Perform linear search
