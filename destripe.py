@@ -571,7 +571,7 @@ def linear_search(p, direction, f, alpha=0.1):
 
 
 # Conjugate Gradient Descent
-def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
+def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=50, alpha=0.1):
     """
     :param p: p is a parameters object
     :param tol:
@@ -584,9 +584,9 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
     print('Starting conjugate gradient optimization')
     direction = np.copy(p.params)
     grad_prev = np.copy(p.params)
-    t_start = time.time()
+    t_start_cost = time.time()
     psi = cost_function(p, f)[1]
-    print('Hours in initial cost function: ', (time.time() - t_start)/3600)
+    print('Hours in initial cost function: ', (time.time() - t_start_cost)/3600)
     sys.stdout.flush()
 
     for i in range(max_iter):
@@ -608,16 +608,16 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
             final_iter = i
             break
 
-        beta = np.zeros_like(direction)
-        valid_mask = grad_prev != 0
-        beta[valid_mask] = np.square(grad)[valid_mask] / np.square(grad_prev)[valid_mask]
-        # KL check this with Chris
-        direction = -grad + beta * direction
+        # valid_mask = grad_prev != 0
+        # beta= np.sum(np.square(grad)[valid_mask]) / np.sum(np.square(grad_prev)[valid_mask])
+        beta = np.sum(np.square(grad)) / np.sum(np.square(grad_prev))
+        direction_prev = direction
+        direction = -grad + beta * direction_prev
 
         # Perform linear search
-        t_start = time.time()
+        t_start_LS = time.time()
         p_new, psi_new= linear_search(p, direction, f, alpha=alpha)
-        print('Hours spent in linear search: ', (time.time() - t_start) / 3600)
+        print('Hours spent in linear search: ', (time.time() - t_start_LS) / 3600)
         print('Current norm: ', current_norm, 'Tol * Norm_0: ', tol, 'Difference (CN-TOL): ', current_norm - tol)
         print('Current d_cost/d_direction_depth: ', alpha * np.sum(grad*direction))
 
@@ -625,7 +625,7 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
         psi = psi_new
         grad_prev = grad
 
-        print('Hours spent in this CG iteration: ', time.time()-t_start_CG_iter)
+        print('Hours spent in this CG iteration: ', (time.time()-t_start_CG_iter)/3600)
         sys.stdout.flush()
 
     print('Conjugate gradient finished. Converged in', final_iter, 'iterations')
