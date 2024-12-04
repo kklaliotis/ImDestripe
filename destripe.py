@@ -16,6 +16,7 @@ from scipy.signal import convolve2d
 from utils import compareutils
 import re
 import sys
+import copy
 import pyimcom_croutines
 
 # KL: Placeholders, some of these should be input arguments or in a config or something
@@ -490,6 +491,12 @@ def cost_function(p, f):
         J_A_image *= I_A.mask # apply permanent mask from A
         apply_object_mask(J_A_image, mask=object_mask)
 
+        if obsid_A=='670' and scaid_A=='10':
+            hdu = fits.PrimaryHDU(I_A.image)
+            hdu.writeto(tempfile + obsid_A + '_' + scaid_A + '_I_A.fits', overwrite=True)
+            hdu = fits.PrimaryHDU(J_A_image)
+            hdu.writeto(tempfile + obsid_A + '_' + scaid_A + '_J_A.fits', overwrite=True)
+
         psi[i, :, :] = I_A.image - J_A_image
         epsilon += np.sum(f(psi[i, :, :]))
     print('Ending cost function. Hours elapsed: ', (time.time()-t0_cost)/3600)
@@ -520,7 +527,8 @@ def residual_function(psi, f_prime):
 
         # Retrieve the effective gain and N_eff to normalize the gradient before transposing back
         g_eff_A, n_eff_A = get_effective_gain(sca_a)
-        # print('SCA A', obsid_A, scaid_A, 'G_eff, N_eff retrieved nonzero check: ', np.all(g_eff_A), np.all(n_eff_A))
+
+        #Avoid dividing by zero
         valid_mask = n_eff_A != 0
         gradient_interpolated[valid_mask] = gradient_interpolated[valid_mask] / (
                     g_eff_A[valid_mask] * n_eff_A[valid_mask])
@@ -532,12 +540,13 @@ def residual_function(psi, f_prime):
             if obsid_B != obsid_A and ov_mat[k, j] != 0:
                 I_B = sca_img(obsid_B, scaid_B)
                 gradient_original = np.zeros(I_B.shape)
-                # print('Just before transpose interpolation (C) for: '+obsid_B+'_'+scaid_B)
+
                 transpose_interpolate(gradient_interpolated, wcs_A, I_B, gradient_original)
-                # print('Just after transpose interpolation (C)')
+
                 gradient_original *= I_B.g_eff
+
                 term_2 = transpose_par(gradient_original)
-                # print('Just after transpose interpolation of parameters')
+                
                 resids[j,:] += term_2
 
         resids[k, :] -= term_1
@@ -548,30 +557,44 @@ def residual_function(psi, f_prime):
 def linear_search(p, direction, f, alpha=0.1):
     print('Starting linear search')
     # alpha = 0.1  # Step size
-    p.params = p.params + alpha * direction
+    # p.params = p.params + alpha * direction
     best_epsilon, best_psi = cost_function(p, f)
 
     # Simple linear search
-    new_p = parameters('constant', 4088)
+    working_p = copy.deepcopy(p)
+
     for k in range(1, 11):
         t0_ls_iter = time.time()
-        new_p.params = new_p.params + k * alpha * direction
+        current_step = alpha * k / (1 + k)
+        clipped_direction = np.clip(direction,
+                                 -np.abs(working_p.params),
+                                 np.abs(working_p.params))
+
+        candidate_params = working_p.params + current_step * clipped_direction
+        candidate_params = np.clip(candidate_params,
+                                   working_p.params - 10*np.std(working_p.params),
+                                   working_p.params + 10*np.std(working_p.params))
+
+        new_p = copy.deepcopy(working_p)
+        new_p.params = candidate_params
+
         new_epsilon, new_psi = cost_function(new_p, f)
 
         if new_epsilon < best_epsilon:
-            p = new_p
+            working_p = new_p
             best_epsilon = new_epsilon
             best_psi = new_psi
         else:
             break
-        print('Linear search iteration ', k, ' finished in ', (time.time() - t0_ls_iter) / 3600, 'hours')
+        print(f'Linear search iteration {k}: Δε = {best_epsilon:.4e}, '
+              f'Time = {(time.time() - t0_ls_iter) / 3600:.4f} hours')
 
     print('Linear search complete in: ', k, 'iterations')
-    return p, best_psi
+    return working_p, best_psi
 
 
 # Conjugate Gradient Descent
-def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=50, alpha=0.1):
+def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
     """
     :param p: p is a parameters object
     :param tol:
@@ -583,9 +606,10 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=50, alpha=0.1):
     """
     print('Starting conjugate gradient optimization')
     direction = np.copy(p.params)
-    grad_prev = np.copy(p.params)
+    grad_prev = np.ones_like(p.params)
     t_start_cost = time.time()
     psi = cost_function(p, f)[1]
+    final_iter = 0.
     print('Hours in initial cost function: ', (time.time() - t_start_cost)/3600)
     sys.stdout.flush()
 
