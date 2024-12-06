@@ -186,7 +186,7 @@ class sca_img:
         hdu.writeto(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits', overwrite=True)
         print(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits created \n')
         t_elapsed_a = time.time() - t_a_start
-        print('Hours to generate this interpolation: ', t_elapsed_a / 3600)
+        print('Minutes to generate this interpolation: ', t_elapsed_a / 60)
 
         del N_eff
         return this_interp
@@ -398,14 +398,14 @@ if test:
         print('Overlap matrix computing start')
         ov_mat = compareutils.get_overlap_matrix(all_wcs, verbose=True)  # an N_wcs x N_wcs matrix containing fractional overlap
         np.save(tempfile+'ovmat.npy', ov_mat)
-        print("Overlap matrix complete. Duration: ", (time.time()-ovmat_t0)/3600, 'hours' )
+        print("Overlap matrix complete. Duration: ", (time.time()-ovmat_t0)/60, 'Minutes' )
         print("Overlap matrix saved to: "+tempfile+"ovmat.npy")
 else:
     ovmat_t0 = time.time()
     print('Overlap matrix computing start')
     ov_mat = compareutils.get_overlap_matrix(all_wcs,
                                              verbose=True)  # an N_wcs x N_wcs matrix containing fractional overlap
-    print("Overlap matrix complete. Duration: ", (time.time() - ovmat_t0) / 3600, 'hours')
+    print("Overlap matrix complete. Duration: ", (time.time() - ovmat_t0) / 60, 'Minutes')
 
 
 def make_interpolated_images():
@@ -493,7 +493,7 @@ def cost_function(p, f):
 
         psi[i, :, :] = I_A.image - J_A_image
         epsilon += np.sum(f(psi[i, :, :]))
-    print('Ending cost function. Hours elapsed: ', (time.time()-t0_cost)/3600)
+    print('Ending cost function. Minutes elapsed: ', (time.time()-t0_cost)/60)
     return epsilon, psi
 
 
@@ -602,7 +602,7 @@ def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
             continue
 
         else:
-            print("Linear search convergence in ", k, " iterations and ", (time.time()-t0_ls_iter)/3600, "hours.")
+            print("Linear search convergence in ", k, " iterations and ", (time.time()-t0_ls_iter)/60, "Minutes.")
 
         # new_p = copy.deepcopy(working_p)
         # new_p.params = working_params
@@ -617,7 +617,7 @@ def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
         # else:
         #     break
         # print(f'Linear search iteration {k}: Δε = {best_epsilon:.4e}, '
-        #       f'Time = {(time.time() - t0_ls_iter) / 3600:.4f} hours')
+        #       f'Time = {(time.time() - t0_ls_iter) / 60:.4f} Minutes')
 
     return best_p, best_psi
 
@@ -639,14 +639,14 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
     t_start_cost = time.time()
     psi = cost_function(p, f)[1]
     final_iter = 0.
-    print('Hours in initial cost function: ', (time.time() - t_start_cost)/3600)
+    print('Minutes in initial cost function: ', (time.time() - t_start_cost)/60)
     sys.stdout.flush()
 
     for i in range(max_iter):
         print("CG Iteration: ", i+1)
         t_start_CG_iter = time.time()
         grad = residual_function(psi, f_prime)
-        print('Hours spent in residual function: ', (time.time() - t_start_CG_iter) / 3600)
+        print('Minutes spent in residual function: ', (time.time() - t_start_CG_iter) / 60)
         sys.stdout.flush()
 
         current_norm = np.linalg.norm(grad)
@@ -670,7 +670,7 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
         # Perform linear search
         t_start_LS = time.time()
         p_new, psi_new= linear_search(p, direction, f, f_prime, alpha=alpha)
-        print('Hours spent in linear search: ', (time.time() - t_start_LS) / 3600)
+        print('Minutes spent in linear search: ', (time.time() - t_start_LS) / 60)
         print('Current norm: ', current_norm, 'Tol * Norm_0: ', tol, 'Difference (CN-TOL): ', current_norm - tol)
         print('Current d_cost/d_direction_depth: ', alpha * np.sum(grad*direction))
 
@@ -678,7 +678,7 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
         psi = psi_new
         grad_prev = grad
 
-        print('Hours spent in this CG iteration: ', (time.time()-t_start_CG_iter)/3600)
+        print('Minutes spent in this CG iteration: ', (time.time()-t_start_CG_iter)/60)
         sys.stdout.flush()
 
     print('Conjugate gradient finished. Converged in', final_iter, 'iterations')
