@@ -491,12 +491,6 @@ def cost_function(p, f):
         J_A_image *= I_A.mask # apply permanent mask from A
         apply_object_mask(J_A_image, mask=object_mask)
 
-        if obsid_A=='670' and scaid_A=='10':
-            hdu = fits.PrimaryHDU(I_A.image)
-            hdu.writeto(tempfile + obsid_A + '_' + scaid_A + '_I_A.fits', overwrite=True)
-            hdu = fits.PrimaryHDU(J_A_image)
-            hdu.writeto(tempfile + obsid_A + '_' + scaid_A + '_J_A.fits', overwrite=True)
-
         psi[i, :, :] = I_A.image - J_A_image
         epsilon += np.sum(f(psi[i, :, :]))
     print('Ending cost function. Hours elapsed: ', (time.time()-t0_cost)/3600)
@@ -546,7 +540,7 @@ def residual_function(psi, f_prime):
                 gradient_original *= I_B.g_eff
 
                 term_2 = transpose_par(gradient_original)
-                
+
                 resids[j,:] += term_2
 
         resids[k, :] -= term_1
@@ -554,43 +548,78 @@ def residual_function(psi, f_prime):
     return resids
 
 
-def linear_search(p, direction, f, alpha=0.1):
+def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
     print('Starting linear search')
+
+    # KL: first version of LS using constant direction depth alpha
     # alpha = 0.1  # Step size
     # p.params = p.params + alpha * direction
+
     best_epsilon, best_psi = cost_function(p, f)
 
     # Simple linear search
     working_p = copy.deepcopy(p)
 
-    for k in range(1, 11):
+    alpha_max = 2**8 / np.max(p.params)
+    alpha_min = -alpha_max
+
+    for k in range(1, n_iter):
         t0_ls_iter = time.time()
-        current_step = alpha * k / (1 + k)
-        clipped_direction = np.clip(direction,
-                                 -np.abs(working_p.params),
-                                 np.abs(working_p.params))
 
-        candidate_params = working_p.params + current_step * clipped_direction
-        candidate_params = np.clip(candidate_params,
-                                   working_p.params - 10*np.std(working_p.params),
-                                   working_p.params + 10*np.std(working_p.params))
+        if k == n_iter - 1:
+            print('WARNING: Linear search did not converge!! This is going to break because best_p is not assigned.')
 
-        new_p = copy.deepcopy(working_p)
-        new_p.params = candidate_params
+        # KL: previous version of LS, using adaptive direction depth alpha
+        # current_step = alpha * k / (1 + k)
+        # clipped_direction = np.clip(direction,
+        #                          -np.abs(working_p.params),
+        #                          np.abs(working_p.params))
 
-        new_epsilon, new_psi = cost_function(new_p, f)
+        # candidate_params = working_p.params + current_step * direction
+        # candidate_params = np.clip(candidate_params,
+        #                            working_p.params - 10*np.std(working_p.params),
+        #                            working_p.params + 10*np.std(working_p.params))
 
-        if new_epsilon < best_epsilon:
-            working_p = new_p
-            best_epsilon = new_epsilon
-            best_psi = new_psi
+        alpha_test = .5 * (np.abs(alpha_min) + np.abs(alpha_max))
+
+        working_params = working_p.params + alpha_test * direction
+        working_p.params = working_params
+
+        working_epsilon, working_psi = cost_function(working_p, f)
+        working_resids = residual_function(working_psi, f_prime)
+
+        d_cost = np.sum(working_resids * direction)
+
+        if k%5==0:
+            print('LS iteration ', k, ': d_cost = ', d_cost, 'epsilon = ', working_epsilon)
+
+        if d_cost > 0:
+            alpha_max = alpha_test
+            continue  # go to next iteration
+
+        elif d_cost < 0:
+            alpha_min = alpha_test
+            continue
+
         else:
-            break
-        print(f'Linear search iteration {k}: Δε = {best_epsilon:.4e}, '
-              f'Time = {(time.time() - t0_ls_iter) / 3600:.4f} hours')
+            print("Linear search convergence in ", k, " iterations and ", (time.time()-t0_ls_iter)/3600, "hours.")
 
-    print('Linear search complete in: ', k, 'iterations')
-    return working_p, best_psi
+        # new_p = copy.deepcopy(working_p)
+        # new_p.params = working_params
+        #
+        # new_epsilon = working_epsilon
+        # new_psi = working_psi
+
+        # if working_epsilon < best_epsilon:
+        best_p = copy.deepcopy(working_p)  # this was indented before
+        #     best_epsilon = working_epsilon
+        best_psi = working_psi  # this was indented before
+        # else:
+        #     break
+        # print(f'Linear search iteration {k}: Δε = {best_epsilon:.4e}, '
+        #       f'Time = {(time.time() - t0_ls_iter) / 3600:.4f} hours')
+
+    return best_p, best_psi
 
 
 # Conjugate Gradient Descent
@@ -640,7 +669,7 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
 
         # Perform linear search
         t_start_LS = time.time()
-        p_new, psi_new= linear_search(p, direction, f, alpha=alpha)
+        p_new, psi_new= linear_search(p, direction, f, f_prime, alpha=alpha)
         print('Hours spent in linear search: ', (time.time() - t_start_LS) / 3600)
         print('Current norm: ', current_norm, 'Tol * Norm_0: ', tol, 'Difference (CN-TOL): ', current_norm - tol)
         print('Current d_cost/d_direction_depth: ', alpha * np.sum(grad*direction))
@@ -668,7 +697,7 @@ print(tempfile + filter + '/' + 'final_params.fits created \n')
 for i,sca in enumerate(all_scas):
     obsid, scaid = get_ids(sca)
     this_sca = sca_img(obsid, scaid)
-    this_param_set =  p.forward_par(i)
+    this_param_set = p.forward_par(i)
     ds_image = this_sca.image - this_param_set
 
     header = this_sca.w
