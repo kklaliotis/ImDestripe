@@ -475,27 +475,39 @@ def cost_function(p, f):
     psi = np.zeros((len(all_scas), 4088, 4088))
     epsilon = 0
 
-    for i, sca_a in enumerate(all_scas):
+    for j, sca_a in enumerate(all_scas):
         m = re.search(r'_(\d+)_(\d+)', sca_a)
         obsid_A = m.group(1)
         scaid_A = m.group(2)
         I_A = sca_img(obsid_A, scaid_A)
         I_A.apply_noise()
 
-        params_mat_A = p.forward_par(i)  # Make destriping params into an image
+        params_mat_A = p.forward_par(j)  # Make destriping params into an image
+        if obsid_A=='670' and scaid_A=='10':
+            print('Info for j: ', j, 'sca: ', sca_a)
+            print('Image A: ', I_A.image)
+            print('Params vector: ', p.params[j, :])
+            print('Params matrix: ', params_mat_A)
         I_A.image = I_A.image - params_mat_A  # Update I_A.image to have the params image subtracted off
+        if obsid_A=='670' and scaid_A=='10':
+            print('Subtracted Image A: ', I_A.image)
         I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
         object_mask = apply_object_mask(I_A.image)
 
-        J_A_image = I_A.make_interpolated(i)  # make_interpolated uses I_A.image so I think this I_A has the params off
+        J_A_image = I_A.make_interpolated(j)  # make_interpolated uses I_A.image so I think this I_A has the params off
         J_A_image *= I_A.mask # apply permanent mask from A
         apply_object_mask(J_A_image, mask=object_mask)
 
-        psi[i, :, :] = I_A.image - J_A_image
+        psi[j, :, :] = I_A.image - J_A_image
 
-        # Compute local epsilon and print
-        local_epsilon = np.sum(f(psi[i, :, :]))
-        print(f"Local epsilon for SCA {i}: {local_epsilon}")
+        # Compute local epsilon
+        local_epsilon = np.sum(f(psi[j, :, :]))
+
+        if j%5==0:
+            print('Image A mean, std: ', np.mean(I_A.image), np.std(I_A.image))
+            print('Image B mean, std: ', np.mean(J_A_image), np.std(J_A_image))
+            print ('Psi mean, std: ', np.mean(psi[j, :, :]), np.std(psi[j, :, :]), )
+            print(f"Local epsilon for SCA {j}: {local_epsilon}")
 
         epsilon += local_epsilon
 
@@ -555,7 +567,6 @@ def residual_function(psi, f_prime):
 
 
 def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
-    print('Starting linear search')
 
     # KL: first version of LS using constant direction depth alpha
     # alpha = 0.1  # Step size
@@ -572,11 +583,11 @@ def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
     for k in range(1, n_iter):
         t0_ls_iter = time.time()
 
-        print("Direction:", direction)
-        print("Initial params:", p.params)
-        print("Initial epsilon:", best_epsilon)
-        print("Working params:", working_p.params)
-
+        if k==1:
+            print('Inside linear search function now.')
+            print("Direction:", direction)
+            print("Initial params:", p.params)
+            print("Initial epsilon:", best_epsilon)
 
         if k == n_iter - 1:
             print('WARNING: Linear search did not converge!! This is going to break because best_p is not assigned.')
@@ -605,7 +616,9 @@ def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
         if k==1 or k%5==0:
             print('LS iteration ', k, ': d_cost = ', d_cost, 'epsilon = ', working_epsilon)
             print("Working resids:", working_resids)
+            print("Working params:", working_p.params)
             print('Current alpha range (min, test, max): ', (alpha_min, alpha_test, alpha_max))
+            print_parameter_diagnostics(working_p)
 
         if d_cost > 0:
             alpha_max = alpha_test
@@ -647,13 +660,16 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
     :param alpha: magnitude of direction steps to take in linear search function
     :return:
     """
-    print('Starting conjugate gradient optimization')
+    print('Starting conjugate gradient optimization\n')
     direction = np.copy(p.params)
     grad_prev = np.ones_like(p.params)
+    print('Initial direction: ', direction)
+    print('Initial grad_prev: ', grad_prev)
     t_start_cost = time.time()
+    print('Starting initial cost function')
     psi = cost_function(p, f)[1]
     final_iter = 0.
-    print('Minutes in initial cost function: ', (time.time() - t_start_cost)/60)
+    print('Minutes in initial cost function: ', (time.time() - t_start_cost)/60, '\n')
     sys.stdout.flush()
 
     for i in range(max_iter):
@@ -666,7 +682,9 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
         current_norm = np.linalg.norm(grad)
 
         if i == 0:
+            print('Initial gradient: ', grad)
             norm_0 = np.linalg.norm(grad)
+            print('Initial norm: ', norm_0)
             tol = tol * norm_0
         if i == max_iter:
             final_iter = max_iter
@@ -678,12 +696,15 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
         # valid_mask = grad_prev != 0
         # beta= np.sum(np.square(grad)[valid_mask]) / np.sum(np.square(grad_prev)[valid_mask])
         beta = np.sum(np.square(grad)) / np.sum(np.square(grad_prev))
+        print('Beta: ', beta, '\n')
         direction_prev = direction
         direction = -grad + beta * direction_prev
 
+
         # Perform linear search
         t_start_LS = time.time()
-        p_new, psi_new= linear_search(p, direction, f, f_prime, alpha=alpha)
+        print('Initiating linear search in direction: ', direction)
+        p_new, psi_new= linear_search(p, direction, f, f_prime)
         print('Minutes spent in linear search: ', (time.time() - t_start_LS) / 60)
         print('Current norm: ', current_norm, 'Tol * Norm_0: ', tol, 'Difference (CN-TOL): ', current_norm - tol)
         #print('Current d_cost/d_direction_depth: ', alpha * np.sum(grad*direction))
