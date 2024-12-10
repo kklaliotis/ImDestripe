@@ -160,7 +160,7 @@ class sca_img:
             obsid_B, scaid_B = get_ids(sca_b)
 
             if obsid_B != self.obsid and ov_mat[ind, j] != 0:  # Check if this sca_b overlaps sca_a
-                print('Image B: ' + obsid_B + '_' + scaid_B)
+                #print('Image B: ' + obsid_B + '_' + scaid_B)
                 this_j = str(j)
                 N_BinA += 1
                 I_B = sca_img(obsid_B, scaid_B)
@@ -184,9 +184,9 @@ class sca_img:
         this_interp = np.divide(this_interp, self.g_eff)
         hdu = fits.PrimaryHDU(this_interp, header=header)
         hdu.writeto(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits', overwrite=True)
-        print(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits created \n')
+        #print(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits created \n')
         t_elapsed_a = time.time() - t_a_start
-        print('Minutes to generate this interpolation: ', t_elapsed_a / 60)
+        #print('Minutes to generate this interpolation: ', t_elapsed_a / 60)
 
         del N_eff
         return this_interp
@@ -428,7 +428,7 @@ def make_interpolated_images():
 
         I_A.make_interpolated(i)
 
-        print('SCAs remaining: ', len(all_scas)-i)
+        #print('SCAs remaining: ', len(all_scas)-i)
 
 
 # Function options. KL: Could move these to another .py file and call them as modules?
@@ -492,7 +492,13 @@ def cost_function(p, f):
         apply_object_mask(J_A_image, mask=object_mask)
 
         psi[i, :, :] = I_A.image - J_A_image
-        epsilon += np.sum(f(psi[i, :, :]))
+
+        # Compute local epsilon and print
+        local_epsilon = np.sum(f(psi[i, :, :]))
+        print(f"Local epsilon for SCA {i}: {local_epsilon}")
+
+        epsilon += local_epsilon
+
     print('Ending cost function. Minutes elapsed: ', (time.time()-t0_cost)/60)
     return epsilon, psi
 
@@ -566,6 +572,12 @@ def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
     for k in range(1, n_iter):
         t0_ls_iter = time.time()
 
+        print("Direction:", direction)
+        print("Initial params:", p.params)
+        print("Initial epsilon:", best_epsilon)
+        print("Working params:", working_p.params)
+
+
         if k == n_iter - 1:
             print('WARNING: Linear search did not converge!! This is going to break because best_p is not assigned.')
 
@@ -590,8 +602,10 @@ def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
 
         d_cost = np.sum(working_resids * direction)
 
-        if k%5==0:
+        if k==1 or k%5==0:
             print('LS iteration ', k, ': d_cost = ', d_cost, 'epsilon = ', working_epsilon)
+            print("Working resids:", working_resids)
+            print('Current alpha range (min, test, max): ', (alpha_min, alpha_test, alpha_max))
 
         if d_cost > 0:
             alpha_max = alpha_test
@@ -672,7 +686,7 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
         p_new, psi_new= linear_search(p, direction, f, f_prime, alpha=alpha)
         print('Minutes spent in linear search: ', (time.time() - t_start_LS) / 60)
         print('Current norm: ', current_norm, 'Tol * Norm_0: ', tol, 'Difference (CN-TOL): ', current_norm - tol)
-        print('Current d_cost/d_direction_depth: ', alpha * np.sum(grad*direction))
+        #print('Current d_cost/d_direction_depth: ', alpha * np.sum(grad*direction))
 
         p = p_new
         psi = psi_new
