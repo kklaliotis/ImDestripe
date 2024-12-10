@@ -212,7 +212,7 @@ class parameters:
         self.model = model
         self.n_rows = n_rows
         self.params_per_row = model_params[str(self.model)]
-        self.params = np.zeros((len(all_scas), self.n_rows * self.params_per_row))
+        self.params = np.ones((len(all_scas), self.n_rows * self.params_per_row))
         self.current_shape = '2D'
 
     def params_2_images(self):
