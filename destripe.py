@@ -523,8 +523,8 @@ def residual_function(psi, f_prime):
             in the future this should be set by default based on what you pass for f
     :return: resids, a 2D array with one row per SCA and one col per image-row-parameter
     """
-    resids = parameters('constant', 4088).params
-    print('Residual calculation started')
+    resids = (parameters('constant', 4088).params) * 0  # params initialize as 1, I think I want this to start at zero
+    print('\nResidual calculation started')
     for k, sca_a in enumerate(all_scas):
 
         # Go and get the WCS object for image A
@@ -535,16 +535,23 @@ def residual_function(psi, f_prime):
 
         # Calculate and then transpose the gradient of I_A-J_A
         gradient_interpolated = f_prime(psi[k, :, :])
+
+        if k==1:  # check
+            print('Gradient in A space: ', gradient_interpolated)
+
         term_1 = transpose_par(gradient_interpolated)
 
         # Retrieve the effective gain and N_eff to normalize the gradient before transposing back
         g_eff_A, n_eff_A = get_effective_gain(sca_a)
 
-        #Avoid dividing by zero
+        # Avoid dividing by zero
         valid_mask = n_eff_A != 0
         gradient_interpolated[valid_mask] = gradient_interpolated[valid_mask] / (
                     g_eff_A[valid_mask] * n_eff_A[valid_mask])
         gradient_interpolated[~valid_mask] = 0
+
+        if k==1:  #check
+            print('Gradient in A space post-normalization: ', gradient_interpolated)
 
         for j, sca_b in enumerate(all_scas):
             obsid_B, scaid_B = get_ids(sca_b)
@@ -556,13 +563,19 @@ def residual_function(psi, f_prime):
                 transpose_interpolate(gradient_interpolated, wcs_A, I_B, gradient_original)
 
                 gradient_original *= I_B.g_eff
+                print('J: ', j, 'gradient in B coordinates: ', gradient_original)
 
                 term_2 = transpose_par(gradient_original)
 
                 resids[j,:] += term_2
 
+                if k==1 :
+                    print('K: ', k, 'j: ', j)
+                    print('Term 1: ', term_1)
+                    print('Term 2: ', term_2)
+
         resids[k, :] -= term_1
-    print('Residuals calculation finished')
+    print('Residuals calculation finished\n')
     return resids
 
 
@@ -584,7 +597,7 @@ def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
         t0_ls_iter = time.time()
 
         if k==1:
-            print('Inside linear search function now.')
+            print('\n!!!! Inside linear search function now.')
             print("Direction:", direction)
             print("Initial params:", p.params)
             print("Initial epsilon:", best_epsilon)
