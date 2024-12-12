@@ -166,13 +166,13 @@ class sca_img:
                 I_B = sca_img(obsid_B, scaid_B)
                 I_B.apply_noise()
                 I_B.apply_permanent_mask() # now I_B.mask is the permanent mask
-                # I_B.apply_object_mask() # KL took this out bc I think we want to do this after interpolation actually
                 B_interp = np.zeros_like(self.image)
                 B_mask_interp = np.zeros_like(self.image)
-                # print('Image B Checks: Image nonzero, G_eff nonzero', np.nonzero(I_B.image)[0],
-                  #    np.nonzero(I_B.g_eff)[0])
                 interpolate_image_bilinear(I_B, self, B_interp)
                 interpolate_image_bilinear(I_B, self, B_mask_interp, mask=I_B.mask) # interpolate B pixel mask onto A grid
+                if obsid_B=='670' and scaid_B=='10':
+                    hdu=fits.PrimaryHDU(B_interp)
+                    hdu.writeto('670_10_B'+str(j)+'_interp.fits')
                 this_interp += B_interp
                 N_eff += B_mask_interp
 
@@ -186,7 +186,6 @@ class sca_img:
         hdu.writeto(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits', overwrite=True)
         #print(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits created \n')
         t_elapsed_a = time.time() - t_a_start
-        #print('Minutes to generate this interpolation: ', t_elapsed_a / 60)
 
         del N_eff
         return this_interp
@@ -283,7 +282,7 @@ def apply_object_mask(image, mask=None):
 
     # Set the target pixels and their neighbors to zero
     image = np.where(neighbor_mask, 0, image)
-    return neighbor_mask
+    return image, neighbor_mask
 
 def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
     """
@@ -489,7 +488,7 @@ def cost_function(p, f):
             hdu = fits.PrimaryHDU(I_A.image)
             hdu.writeto('670_10_I_A_sub.fits', overwrite=True)
         I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
-        object_mask = apply_object_mask(I_A.image)
+        I_A.image,object_mask = apply_object_mask(I_A.image)
         if obsid_A=='670' and scaid_A=='10':
             hdu = fits.PrimaryHDU(I_A.image)
             hdu.writeto('670_10_I_A_sub_masked.fits', overwrite=True)
@@ -499,12 +498,12 @@ def cost_function(p, f):
             hdu = fits.PrimaryHDU(J_A_image)
             hdu.writeto('670_10_J_A.fits', overwrite=True)
         J_A_image *= I_A.mask # apply permanent mask from A
-        apply_object_mask(J_A_image, mask=object_mask)
+        J_A_image = apply_object_mask(J_A_image, mask=object_mask)[0]
         if obsid_A=='670' and scaid_A=='10':
             hdu = fits.PrimaryHDU(J_A_image)
             hdu.writeto('670_10_J_A_masked.fits', overwrite=True)
 
-        psi[j, :, :] = I_A.image - J_A_image
+        psi[j, :, :] = np.where(J_A_image != 0, I_A.image - J_A_image, 0)
 
         # Compute local epsilon
         local_epsilon = np.sum(f(psi[j, :, :]))
