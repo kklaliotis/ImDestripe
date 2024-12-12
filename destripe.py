@@ -506,8 +506,14 @@ def cost_function(p, f):
         if j%5==0:
             print('Image A mean, std: ', np.mean(I_A.image), np.std(I_A.image))
             print('Image B mean, std: ', np.mean(J_A_image), np.std(J_A_image))
-            print ('Psi mean, std: ', np.mean(psi[j, :, :]), np.std(psi[j, :, :]), )
+            print ('Psi mean, std: ', np.mean(psi[j, :, :]), np.std(psi[j, :, :]) )
+            print('f(Psi) mean, std:', np.mean(f(psi[j, :, :])), np.std(f(psi[j, :, :])))
             print(f"Local epsilon for SCA {j}: {local_epsilon}")
+        if obsid_A == '670' and scaid_A == '10':
+            hdu = fits.PrimaryHDU(psi[j,:,:])
+            hdu.writeto('Psi_670_10_cost.fits', overwrite=True)
+            hdu = fits.PrimaryHDU(f(psi[j,:,:]))
+            hdu.writeto('F_Psi_670_10_cost.fits', overwrite=True)
 
         epsilon += local_epsilon
 
@@ -536,10 +542,11 @@ def residual_function(psi, f_prime):
         # Calculate and then transpose the gradient of I_A-J_A
         gradient_interpolated = f_prime(psi[k, :, :])
 
-        if k==1:  # check
-            print('Gradient in A space: ', gradient_interpolated)
-
         term_1 = transpose_par(gradient_interpolated)
+        if obsid_A == '670' and scaid_A == '10':
+            hdu = fits.PrimaryHDU(gradient_interpolated)
+            hdu.writeto('Fp_Psi_670_10_resid.fits', overwrite=True)
+            print('Term 1: ', term_1.shape, term_1)
 
         # Retrieve the effective gain and N_eff to normalize the gradient before transposing back
         g_eff_A, n_eff_A = get_effective_gain(sca_a)
@@ -550,8 +557,9 @@ def residual_function(psi, f_prime):
                     g_eff_A[valid_mask] * n_eff_A[valid_mask])
         gradient_interpolated[~valid_mask] = 0
 
-        if k==1:  #check
-            print('Gradient in A space post-normalization: ', gradient_interpolated)
+        if obsid_A == '670' and scaid_A == '10':
+            hdu = fits.PrimaryHDU(gradient_interpolated)
+            hdu.writeto('Fp_norm_Psi_670_10_resid.fits', overwrite=True)
 
         for j, sca_b in enumerate(all_scas):
             obsid_B, scaid_B = get_ids(sca_b)
@@ -563,16 +571,15 @@ def residual_function(psi, f_prime):
                 transpose_interpolate(gradient_interpolated, wcs_A, I_B, gradient_original)
 
                 gradient_original *= I_B.g_eff
-                print('J: ', j, 'gradient in B coordinates: ', gradient_original)
+
+                if obsid_A == '670' and scaid_A == '10':
+                    hdu = fits.PrimaryHDU(gradient_original)
+                    hdu.writeto('Fp_norm_Psi_B'+j+'670_10_resid.fits', overwrite=True)
 
                 term_2 = transpose_par(gradient_original)
 
                 resids[j,:] += term_2
-
-                if k==1 :
-                    print('K: ', k, 'j: ', j)
-                    print('Term 1: ', term_1)
-                    print('Term 2: ', term_2)
+                print('Term 2: ', term_2.shape, term_2)
 
         resids[k, :] -= term_1
     print('Residuals calculation finished\n')
