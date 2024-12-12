@@ -337,7 +337,7 @@ def transpose_interpolate( image_A, wcs_A, image_B, original_image):
      :return:
      """
      x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_B.w, wcs_A, pad=0)
-     coords = np.column_stack((x_target, y_target)).flatten()
+     coords = np.column_stack((x_target.ravel(), y_target.ravel())).flatten().astype(np.float32)
 
      rows = int(image_B.shape[0])
      cols = int(image_B.shape[1])
@@ -483,37 +483,42 @@ def cost_function(p, f):
         I_A.apply_noise()
 
         params_mat_A = p.forward_par(j)  # Make destriping params into an image
-        if obsid_A=='670' and scaid_A=='10':
-            print('Info for j: ', j, 'sca: ', sca_a)
-            print('Image A: ', I_A.image)
-            print('Params vector: ', p.params[j, :])
-            print('Params matrix: ', params_mat_A)
+
         I_A.image = I_A.image - params_mat_A  # Update I_A.image to have the params image subtracted off
         if obsid_A=='670' and scaid_A=='10':
-            print('Subtracted Image A: ', I_A.image)
+            hdu = fits.PrimaryHDU(I_A.image)
+            hdu.writeto('670_10_I_A_sub.fits', overwrite=True)
         I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
         object_mask = apply_object_mask(I_A.image)
+        if obsid_A=='670' and scaid_A=='10':
+            hdu = fits.PrimaryHDU(I_A.image)
+            hdu.writeto('670_10_I_A_sub_masked.fits', overwrite=True)
 
         J_A_image = I_A.make_interpolated(j)  # make_interpolated uses I_A.image so I think this I_A has the params off
+        if obsid_A=='670' and scaid_A=='10':
+            hdu = fits.PrimaryHDU(J_A_image)
+            hdu.writeto('670_10_J_A.fits', overwrite=True)
         J_A_image *= I_A.mask # apply permanent mask from A
         apply_object_mask(J_A_image, mask=object_mask)
+        if obsid_A=='670' and scaid_A=='10':
+            hdu = fits.PrimaryHDU(J_A_image)
+            hdu.writeto('670_10_J_A_masked.fits', overwrite=True)
 
         psi[j, :, :] = I_A.image - J_A_image
 
         # Compute local epsilon
         local_epsilon = np.sum(f(psi[j, :, :]))
 
-        if j%5==0:
+        if obsid_A=='670' and scaid_A=='10':
             print('Image A mean, std: ', np.mean(I_A.image), np.std(I_A.image))
             print('Image B mean, std: ', np.mean(J_A_image), np.std(J_A_image))
             print ('Psi mean, std: ', np.mean(psi[j, :, :]), np.std(psi[j, :, :]) )
             print('f(Psi) mean, std:', np.mean(f(psi[j, :, :])), np.std(f(psi[j, :, :])))
             print(f"Local epsilon for SCA {j}: {local_epsilon}")
-        if obsid_A == '670' and scaid_A == '10':
-            hdu = fits.PrimaryHDU(psi[j,:,:])
-            hdu.writeto('Psi_670_10_cost.fits', overwrite=True)
-            hdu = fits.PrimaryHDU(f(psi[j,:,:]))
-            hdu.writeto('F_Psi_670_10_cost.fits', overwrite=True)
+            # hdu = fits.PrimaryHDU(psi[j,:,:])
+            # hdu.writeto('Psi_670_10_cost.fits', overwrite=True)
+            # hdu = fits.PrimaryHDU(f(psi[j,:,:]))
+            # hdu.writeto('F_Psi_670_10_cost.fits', overwrite=True)
 
         epsilon += local_epsilon
 
@@ -574,7 +579,7 @@ def residual_function(psi, f_prime):
 
                 if obsid_A == '670' and scaid_A == '10':
                     hdu = fits.PrimaryHDU(gradient_original)
-                    hdu.writeto('Fp_norm_Psi_B'+j+'670_10_resid.fits', overwrite=True)
+                    hdu.writeto('Fp_norm_Psi_B'+str(j)+'670_10_resid.fits', overwrite=True)
 
                 term_2 = transpose_par(gradient_original)
 
