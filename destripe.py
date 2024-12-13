@@ -32,7 +32,7 @@ tempfile = '/fs/scratch/PCON0003/klaliotis/destripe/test_out/'  # temporary temp
 # tempfile = '/tmp/klaliotis-tmp/'
 s_in = 0.11  # arcsec^2
 t_exp = 154  # sec
-A_eff = 7340  # cm ^2
+A_eff = 7340  # cm ^2; for H
 t0 = time.time()
 test = True
 
@@ -100,7 +100,7 @@ class sca_img:
                               (dec[1:-1,2:] - dec[1:-1,:-2])/2, (dec[2:, 1:-1] - dec[:-2, 1:-1])/2))
             derivs_px = np.reshape(np.transpose(derivs), (4088**2, 2, 2))
             det_mat = np.reshape(np.linalg.det(derivs_px), (4088,4088))
-            g_eff[:,:] = det_mat * np.cos(np.deg2rad(dec[1:4089,1:4089]))
+            g_eff[:,:] = 1 / (det_mat * np.cos(np.deg2rad(dec[1:4089,1:4089])) * t_exp * A_eff )
             del g_eff
 
         self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='r', shape=self.shape)
@@ -148,6 +148,7 @@ class sca_img:
         """
         this_interp = np.zeros(self.shape)
         N_eff = np.memmap(tempfile + self.obsid + '_' + self.scaid + '_Neff.dat', dtype='float32', mode='w+', shape=self.shape)
+
         t_a_start = time.time()
         print('Starting interpolation for SCA' + self.obsid + '_' + self.scaid)
         # print('Time: ', t_a_start)
@@ -582,10 +583,14 @@ def residual_function(psi, f_prime):
                     hdu.writeto('test_images/Fp_norm_Psi_B_'+obsid_B+scaid_B+'resid.fits', overwrite=True)
 
                 term_2 = transpose_par(gradient_original)
+                if obsid_A == '670' and scaid_A == '10':
+                    print('Terms 1 and 2 means: ', np.mean(term_1), np.mean(term_2))
+                    print('G_eff_a, G_eff_b means: ', np.mean(g_eff_A), np.mean(I_B.g_eff))
 
                 resids[j,:] += term_2
 
         resids[k, :] -= term_1
+
     print('Residuals calculation finished\n')
     return resids
 
