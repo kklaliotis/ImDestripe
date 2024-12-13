@@ -93,7 +93,7 @@ class sca_img:
         # Calculate effecive gain
         if not os.path.isfile(tempfile + obsid+'_'+scaid+'_geff.dat'):
             g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='w+', shape=self.shape)
-            ra, dec = self.get_coordinates(pad=2)
+            ra, dec = self.get_coordinates(pad=2.)
             ra = ra.reshape((4090, 4090))
             dec = dec.reshape((4090, 4090))
             derivs = np.array(((ra[1:-1,2:] - ra[1:-1,:-2])/2, (ra[2:, 1:-1] - ra[:-2, 1:-1])/2,
@@ -124,10 +124,10 @@ class sca_img:
         self.image *= pm
         self.mask *= pm
 
-    def get_coordinates(self, pad=0):
+    def get_coordinates(self, pad=0.):
         """
         create an array of ra, dec coords for the image
-        :param pad: add padding to the array. default is zero
+        :param pad: add padding to the array. default is zero. float64
         :return: coords, an array of (ra, dec) pairs
         """
         wcs = self.w
