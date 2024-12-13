@@ -173,7 +173,7 @@ class sca_img:
                 interpolate_image_bilinear(I_B, self, B_mask_interp, mask=I_B.mask) # interpolate B pixel mask onto A grid
                 if obsid_B=='670' and scaid_B=='10':
                     hdu=fits.PrimaryHDU(B_interp)
-                    hdu.writeto('test_images/670_10_B'+self.obsid+'_'+self.scaid+'_interp.fits', overwrite=True)
+                    hdu.writeto(test_image_dir+'670_10_B'+self.obsid+'_'+self.scaid+'_interp.fits', overwrite=True)
                 this_interp += B_interp
                 N_eff += B_mask_interp
 
@@ -487,22 +487,22 @@ def cost_function(p, f):
         I_A.image = I_A.image - params_mat_A  # Update I_A.image to have the params image subtracted off
         if obsid_A=='670' and scaid_A=='10':
             hdu = fits.PrimaryHDU(I_A.image)
-            hdu.writeto('test_images/670_10_I_A_sub.fits', overwrite=True)
+            hdu.writeto(test_image_dir+'670_10_I_A_sub.fits', overwrite=True)
         I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
         I_A.image,object_mask = apply_object_mask(I_A.image)
         if obsid_A=='670' and scaid_A=='10':
             hdu = fits.PrimaryHDU(I_A.image)
-            hdu.writeto('test_images/670_10_I_A_sub_masked.fits', overwrite=True)
+            hdu.writeto(test_image_dir+'670_10_I_A_sub_masked.fits', overwrite=True)
 
         J_A_image = I_A.make_interpolated(j)  # make_interpolated uses I_A.image so I think this I_A has the params off
         if obsid_A=='670' and scaid_A=='10':
             hdu = fits.PrimaryHDU(J_A_image)
-            hdu.writeto('test_images/670_10_J_A.fits', overwrite=True)
+            hdu.writeto(test_image_dir+'670_10_J_A.fits', overwrite=True)
         J_A_image *= I_A.mask # apply permanent mask from A
         J_A_image = apply_object_mask(J_A_image, mask=object_mask)[0]
         if obsid_A=='670' and scaid_A=='10':
             hdu = fits.PrimaryHDU(J_A_image)
-            hdu.writeto('test_images/670_10_J_A_masked.fits', overwrite=True)
+            hdu.writeto(test_image_dir+'670_10_J_A_masked.fits', overwrite=True)
 
         psi[j, :, :] = np.where(J_A_image != 0, I_A.image - J_A_image, 0)
 
@@ -516,9 +516,9 @@ def cost_function(p, f):
             print('f(Psi) mean, std:', np.mean(f(psi[j, :, :])), np.std(f(psi[j, :, :])))
             print(f"Local epsilon for SCA {j}: {local_epsilon}")
             hdu = fits.PrimaryHDU(psi[j,:,:])
-            hdu.writeto('test_images/Psi_670_10_cost.fits', overwrite=True)
+            hdu.writeto(test_image_dir+'Psi_670_10_cost.fits', overwrite=True)
             hdu = fits.PrimaryHDU(f(psi[j,:,:]))
-            hdu.writeto('test_images/F_Psi_670_10_cost.fits', overwrite=True)
+            hdu.writeto(test_image_dir+'F_Psi_670_10_cost.fits', overwrite=True)
 
         epsilon += local_epsilon
 
@@ -548,9 +548,9 @@ def residual_function(psi, f_prime):
         gradient_interpolated = f_prime(psi[k, :, :])
         if obsid_A == '670' and scaid_A == '10':
             hdu = fits.PrimaryHDU(psi[k,:,:])
-            hdu.writeto('test_images/Psi_670_10_resid.fits', overwrite=True)
+            hdu.writeto(test_image_dir+'Psi_670_10_resid.fits', overwrite=True)
             hdu = fits.PrimaryHDU(gradient_interpolated)
-            hdu.writeto('test_images/Fp_Psi_670_10_resid.fits', overwrite=True)
+            hdu.writeto(test_image_dir+'Fp_Psi_670_10_resid.fits', overwrite=True)
 
         term_1 = transpose_par(gradient_interpolated)
 
@@ -565,7 +565,7 @@ def residual_function(psi, f_prime):
 
         if obsid_A == '670' and scaid_A == '10':
             hdu = fits.PrimaryHDU(gradient_interpolated)
-            hdu.writeto('test_images/Fp_norm_Psi_670_10_resid.fits', overwrite=True)
+            hdu.writeto(test_image_dir+'Fp_norm_Psi_670_10_resid.fits', overwrite=True)
 
         for j, sca_b in enumerate(all_scas):
             obsid_B, scaid_B = get_ids(sca_b)
@@ -580,7 +580,7 @@ def residual_function(psi, f_prime):
 
                 if obsid_A == '670' and scaid_A == '10':
                     hdu = fits.PrimaryHDU(gradient_original)
-                    hdu.writeto('test_images/Fp_norm_Psi_B_'+obsid_B+scaid_B+'resid.fits', overwrite=True)
+                    hdu.writeto(test_image_dir+'Fp_norm_Psi_B_'+obsid_B+scaid_B+'resid.fits', overwrite=True)
 
                 term_2 = transpose_par(gradient_original)
                 if obsid_A == '670' and scaid_A == '10':
@@ -696,6 +696,8 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
 
     t_start_cost = time.time()
     print('Starting initial cost function')
+    global test_image_dir
+    test_image_dir = 'test_images/'+str(0)+'/'
     psi = cost_function(p, f)[1]
     final_iter = 0.
     print('Minutes in initial cost function: ', (time.time() - t_start_cost)/60, '\n')
@@ -703,6 +705,7 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
 
     for i in range(max_iter):
         print("CG Iteration: ", i+1)
+        test_image_dir = 'test_images/' + str(i+1) + '/'
         t_start_CG_iter = time.time()
 
         # Compute the gradient
