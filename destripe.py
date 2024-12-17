@@ -141,7 +141,7 @@ class sca_img:
         ra, dec = wcs.all_pix2world(x_flat, y_flat, 0)  # 0 is for the first frame (1-indexed)
         return ra, dec
 
-    def make_interpolated(self, ind):
+    def make_interpolated(self, ind, params=None):
         """
         Construct an version of this SCA interpolated from other, overlapping ones.
         :return:
@@ -157,15 +157,19 @@ class sca_img:
 
         N_BinA = 0
 
-        for j, sca_b in enumerate(all_scas):
+        for k, sca_b in enumerate(all_scas):
             obsid_B, scaid_B = get_ids(sca_b)
 
-            if obsid_B != self.obsid and ov_mat[ind, j] != 0:  # Check if this sca_b overlaps sca_a
+            if obsid_B != self.obsid and ov_mat[ind, k] != 0:  # Check if this sca_b overlaps sca_a
                 #print('Image B: ' + obsid_B + '_' + scaid_B)
-                this_j = str(j)
                 N_BinA += 1
                 I_B = sca_img(obsid_B, scaid_B)
                 I_B.apply_noise()
+
+                if params:
+                    params_mat = params.forward_par(k)
+                    I_B.image = I_B.image - params_mat #Subtract parameter B images from the image Bs
+
                 I_B.apply_permanent_mask() # now I_B.mask is the permanent mask
                 B_interp = np.zeros_like(self.image)
                 B_mask_interp = np.zeros_like(self.image)
@@ -408,25 +412,26 @@ else:
     print("Overlap matrix complete. Duration: ", (time.time() - ovmat_t0) / 60, 'Minutes')
 
 
-def make_interpolated_images():
-    """
-    Iterate through all the SCAs and create interpolated
-    versions of them from all the other SCAs that overlap them
-    :return: None
-    """
-    for i, sca_a in enumerate(all_scas):
-        m = re.search(r'_(\d+)_(\d+)', sca_a)
-        obsid_A = m.group(1)
-        scaid_A = m.group(2)
-        print('Img A: ' + obsid_A + '_' + scaid_A)
-        I_A = sca_img(obsid_A, scaid_A)
-        I_A.apply_noise()
-        I_A.apply_permanent_mask()
-        # I_A.apply_object_mask() # KL: I think I don't want to apply the object mask until I compute psi_A
-        # KL sidenote I also dont think it matters at this stage whether I_A has been masked ? or whether noise is there?
-        # like I think I could take out apply noise and apply permanent mask here.
-
-        I_A.make_interpolated(i)
+# KL Lol this doesnt even get used I dont think
+# def make_interpolated_images():
+#     """
+#     Iterate through all the SCAs and create interpolated
+#     versions of them from all the other SCAs that overlap them
+#     :return: None
+#     """
+#     for i, sca_a in enumerate(all_scas):
+#         m = re.search(r'_(\d+)_(\d+)', sca_a)
+#         obsid_A = m.group(1)
+#         scaid_A = m.group(2)
+#         print('Img A: ' + obsid_A + '_' + scaid_A)
+#         I_A = sca_img(obsid_A, scaid_A)
+#         I_A.apply_noise()
+#         I_A.apply_permanent_mask()
+#         # I_A.apply_object_mask() # KL: I think I don't want to apply the object mask until I compute psi_A
+#         # KL sidenote I also dont think it matters at this stage whether I_A has been masked ? or whether noise is there?
+#         # like I think I could take out apply noise and apply permanent mask here.
+#
+#         I_A.make_interpolated(i)
 
         #print('SCAs remaining: ', len(all_scas)-i)
 
@@ -466,8 +471,7 @@ def quadloss_prime(x, x0, b):
 
 def cost_function(p, f):
     """
-    p: params vector; shape is n_rows * n_scas * n_params_per_row.
-        p should be a parameters object
+    p: parameters object
     f: keyword for function dictionary options; should also set an f_prime
     """
     print('Initializing cost function')
@@ -483,8 +487,8 @@ def cost_function(p, f):
         I_A.apply_noise()
 
         params_mat_A = p.forward_par(j)  # Make destriping params into an image
-
         I_A.image = I_A.image - params_mat_A  # Update I_A.image to have the params image subtracted off
+
         if obsid_A=='670' and scaid_A=='10':
             hdu = fits.PrimaryHDU(I_A.image)
             hdu.writeto(test_image_dir+'670_10_I_A_sub.fits', overwrite=True)
@@ -494,7 +498,8 @@ def cost_function(p, f):
             hdu = fits.PrimaryHDU(I_A.image)
             hdu.writeto(test_image_dir+'670_10_I_A_sub_masked.fits', overwrite=True)
 
-        J_A_image = I_A.make_interpolated(j)  # make_interpolated uses I_A.image so I think this I_A has the params off
+        J_A_image = I_A.make_interpolated(j, params=p)  # make_interpolated uses I_A.image so I think this I_A has the params off
+                                                # KL actually i am very much not sure about this and think this may be The Problem
         if obsid_A=='670' and scaid_A=='10':
             hdu = fits.PrimaryHDU(J_A_image)
             hdu.writeto(test_image_dir+'670_10_J_A.fits', overwrite=True)
@@ -632,7 +637,7 @@ def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
         #                            working_p.params - 10*np.std(working_p.params),
         #                            working_p.params + 10*np.std(working_p.params))
 
-        alpha_test = .5 * (np.abs(alpha_min) + np.abs(alpha_max))
+        alpha_test = .5 * (alpha_min + alpha_max)
 
         working_params = working_p.params + alpha_test * direction
         working_p.params = working_params
