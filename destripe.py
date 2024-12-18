@@ -147,7 +147,15 @@ class sca_img:
         :return:
         """
         this_interp = np.zeros(self.shape)
-        N_eff = np.memmap(tempfile + self.obsid + '_' + self.scaid + '_Neff.dat', dtype='float32', mode='w+', shape=self.shape)
+
+        if not os.path.isfile(tempfile + self.obsid+'_'+self.scaid+'_Neff.dat'):
+            N_eff = np.memmap(tempfile + self.obsid + '_' + self.scaid + '_Neff.dat', dtype='float32', mode='w+',
+                              shape=self.shape)
+            make_Neff=True
+        else:
+            N_eff = np.memmap(tempfile + self.obsid + '_' + self.scaid + '_Neff.dat', dtype='float32', mode='r',
+                              shape=self.shape)
+            make_Neff=False
 
         t_a_start = time.time()
         print('Starting interpolation for SCA' + self.obsid + '_' + self.scaid)
@@ -166,20 +174,32 @@ class sca_img:
                 I_B = sca_img(obsid_B, scaid_B)
                 I_B.apply_noise()
 
+                if self.obsid=='670' and self.scaid=='10':
+                    print('\nI_B: ', obsid_B, scaid_B, 'Pre-Param-Subtraction mean:', np.mean(I_B.image))
+
                 if params:
                     params_mat = params.forward_par(k)
                     I_B.image = I_B.image - params_mat #Subtract parameter B images from the image Bs
+                    if self.obsid == '670' and self.scaid == '10':
+                        print('Params mean: ', np.mean(params_mat))
+                        print('Post-Param-Subtraction mean:', np.mean(I_B.image))
 
                 I_B.apply_permanent_mask() # now I_B.mask is the permanent mask
                 B_interp = np.zeros_like(self.image)
-                B_mask_interp = np.zeros_like(self.image)
                 interpolate_image_bilinear(I_B, self, B_interp)
-                interpolate_image_bilinear(I_B, self, B_mask_interp, mask=I_B.mask) # interpolate B pixel mask onto A grid
-                if obsid_B=='670' and scaid_B=='10':
+
+                if make_Neff:
+                    B_mask_interp = np.zeros_like(self.image)
+                    interpolate_image_bilinear(I_B, self, B_mask_interp, mask=I_B.mask) # interpolate B pixel mask onto A grid
+
+                if obsid_B=='670' and scaid_B=='10' and make_Neff: #only do this once
                     hdu=fits.PrimaryHDU(B_interp)
                     hdu.writeto(test_image_dir+'670_10_B'+self.obsid+'_'+self.scaid+'_interp.fits', overwrite=True)
+
                 this_interp += B_interp
-                N_eff += B_mask_interp
+
+                if make_Neff:
+                    N_eff += B_mask_interp
 
 
         print('Interpolation done. Number of contributing SCAs: ', N_BinA)
