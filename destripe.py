@@ -647,11 +647,13 @@ def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
 
         d_cost = np.sum(working_resids * direction)
 
-        if k==1 or k%5==0:
-            print('LS iteration ', k, ': d_cost = ', d_cost, 'epsilon = ', working_epsilon)
-            print("Working resids:", working_resids)
-            print("Working params:", working_p.params)
-            print('Current alpha range (min, test, max): ', (alpha_min, alpha_test, alpha_max))
+
+        print('Ending LS iteration', k)
+        print('Current d_cost = ', d_cost, 'epsilon = ', working_epsilon)
+        print("Working resids:", working_resids)
+        print("Working params:", working_p.params)
+        print('Current alpha range (min, test, max): ', (alpha_min, alpha_test, alpha_max))
+        print('Time spent in this LS iteration:', (time.time()-t0_ls_iter)/60, "Minutes."'\n')
 
         if d_cost > 0:
             alpha_max = alpha_test
