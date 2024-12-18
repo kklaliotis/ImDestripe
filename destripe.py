@@ -236,7 +236,7 @@ class parameters:
         self.model = model
         self.n_rows = n_rows
         self.params_per_row = model_params[str(self.model)]
-        self.params = np.ones((len(all_scas), self.n_rows * self.params_per_row))
+        self.params = np.zeros((len(all_scas), self.n_rows * self.params_per_row))
         self.current_shape = '2D'
 
     def params_2_images(self):
@@ -509,9 +509,6 @@ def cost_function(p, f):
         params_mat_A = p.forward_par(j)  # Make destriping params into an image
         I_A.image = I_A.image - params_mat_A  # Update I_A.image to have the params image subtracted off
 
-        if obsid_A=='670' and scaid_A=='10':
-            hdu = fits.PrimaryHDU(I_A.image)
-            hdu.writeto(test_image_dir+'670_10_I_A_sub.fits', overwrite=True)
         I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
         I_A.image,object_mask = apply_object_mask(I_A.image)
         if obsid_A=='670' and scaid_A=='10':
@@ -520,9 +517,7 @@ def cost_function(p, f):
 
         J_A_image = I_A.make_interpolated(j, params=p)  # make_interpolated uses I_A.image so I think this I_A has the params off
                                                 # KL actually i am very much not sure about this and think this may be The Problem
-        if obsid_A=='670' and scaid_A=='10':
-            hdu = fits.PrimaryHDU(J_A_image)
-            hdu.writeto(test_image_dir+'670_10_J_A.fits', overwrite=True)
+
         J_A_image *= I_A.mask # apply permanent mask from A
         J_A_image = apply_object_mask(J_A_image, mask=object_mask)[0]
         if obsid_A=='670' and scaid_A=='10':
@@ -540,10 +535,6 @@ def cost_function(p, f):
             print ('Psi mean, std: ', np.mean(psi[j, :, :]), np.std(psi[j, :, :]) )
             print('f(Psi) mean, std:', np.mean(f(psi[j, :, :])), np.std(f(psi[j, :, :])))
             print(f"Local epsilon for SCA {j}: {local_epsilon}")
-            hdu = fits.PrimaryHDU(psi[j,:,:])
-            hdu.writeto(test_image_dir+'Psi_670_10_cost.fits', overwrite=True)
-            hdu = fits.PrimaryHDU(f(psi[j,:,:]))
-            hdu.writeto(test_image_dir+'F_Psi_670_10_cost.fits', overwrite=True)
 
         epsilon += local_epsilon
 
@@ -559,7 +550,7 @@ def residual_function(psi, f_prime):
             in the future this should be set by default based on what you pass for f
     :return: resids, a 2D array with one row per SCA and one col per image-row-parameter
     """
-    resids = (parameters('constant', 4088).params) * 0  # params initialize as 1, I think I want this to start at zero
+    resids = (parameters('constant', 4088).params)
     print('\nResidual calculation started')
     for k, sca_a in enumerate(all_scas):
 
@@ -572,10 +563,8 @@ def residual_function(psi, f_prime):
         # Calculate and then transpose the gradient of I_A-J_A
         gradient_interpolated = f_prime(psi[k, :, :])
         if obsid_A == '670' and scaid_A == '10':
-            hdu = fits.PrimaryHDU(psi[k,:,:])
-            hdu.writeto(test_image_dir+'Psi_670_10_resid.fits', overwrite=True)
             hdu = fits.PrimaryHDU(gradient_interpolated)
-            hdu.writeto(test_image_dir+'Fp_Psi_670_10_resid.fits', overwrite=True)
+            hdu.writeto(test_image_dir+'Fp_Psi_670_10.fits', overwrite=True)
 
         term_1 = transpose_par(gradient_interpolated)
 
@@ -590,7 +579,7 @@ def residual_function(psi, f_prime):
 
         if obsid_A == '670' and scaid_A == '10':
             hdu = fits.PrimaryHDU(gradient_interpolated)
-            hdu.writeto(test_image_dir+'Fp_norm_Psi_670_10_resid.fits', overwrite=True)
+            hdu.writeto(test_image_dir+'Fp_norm_Psi_670_10.fits', overwrite=True)
 
         for j, sca_b in enumerate(all_scas):
             obsid_B, scaid_B = get_ids(sca_b)
@@ -605,7 +594,7 @@ def residual_function(psi, f_prime):
 
                 if obsid_A == '670' and scaid_A == '10':
                     hdu = fits.PrimaryHDU(gradient_original)
-                    hdu.writeto(test_image_dir+'Fp_norm_Psi_B_'+obsid_B+scaid_B+'resid.fits', overwrite=True)
+                    hdu.writeto(test_image_dir+'Fp_norm_Psi_B_'+obsid_B+scaid_B+'.fits', overwrite=True)
 
                 term_2 = transpose_par(gradient_original)
                 if obsid_A == '670' and scaid_A == '10':
@@ -631,7 +620,11 @@ def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
     # Simple linear search
     working_p = copy.deepcopy(p)
 
-    alpha_max = 2**8 / np.max(p.params)
+    if not np.any(p.params):
+        alpha_max = 2**8
+    else:
+        alpha_max = 2**8 / np.max(p.params)
+
     alpha_min = -alpha_max
 
     for k in range(1, n_iter):
@@ -674,6 +667,9 @@ def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
         print("Working params:", working_p.params)
         print('Current alpha range (min, test, max): ', (alpha_min, alpha_test, alpha_max))
         print('Time spent in this LS iteration:', (time.time()-t0_ls_iter)/60, "Minutes."'\n')
+
+        hdu = fits.PrimaryHDU(working_resids)
+        hdu.writeto(test_image_dir+'LS_Residuals_'+str(k)+'.fits', overwrite=True)
 
         if d_cost > 0:
             alpha_max = alpha_test
