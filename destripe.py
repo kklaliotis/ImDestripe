@@ -659,7 +659,7 @@ def linear_search(p, direction, f, f_prime, n_iter=50, alpha=0.1):
 
         alpha_test = .5 * (alpha_min + alpha_max)
 
-        working_params = working_p.params + alpha_test * direction
+        working_params = p.params + alpha_test * direction
         working_p.params = working_params
 
         working_epsilon, working_psi = cost_function(working_p, f)
