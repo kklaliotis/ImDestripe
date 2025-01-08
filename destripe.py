@@ -740,13 +740,15 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
     sys.stdout.flush()
 
     for i in range(max_iter):
-        print("CG Iteration: ", i+1)
+        print("\nCG Iteration:", i+1)
+        if not os.path.exists('test_images/'+str(i+1)):
+            os.makedirs('test_images/'+str(i+1))
         test_image_dir = 'test_images/' + str(i+1) + '/'
         t_start_CG_iter = time.time()
 
         # Compute the gradient
         grad = residual_function(psi, f_prime)
-        print('Minutes spent in residual function: ', (time.time() - t_start_CG_iter) / 60)
+        print('Minutes spent in residual function:', (time.time() - t_start_CG_iter) / 60)
         sys.stdout.flush()
 
         # Compute the norm of the gradient
@@ -759,35 +761,41 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
             norm_0 = np.linalg.norm(grad)
             print('Initial norm: ', norm_0)
             tol = tol * norm_0
-            direction = -grad # First direction is negative grad
-            beta = 0 # First beta is zero
+            direction = -grad  # First direction is negative grad
+            beta = 0  # First beta is zero
 
         if current_norm < tol:
-            print('Convergence reached at iteration:', i + 1)
+            print('\nConvergence reached at iteration:', i + 1)
             break
 
         if i > 0:
             beta = np.sum(np.square(grad)) / np.sum(np.square(grad_prev))  # Calculate beta (direction scaling)
-            print('Beta: ', beta, '\n')
+            print('Current Beta: ', beta)
             direction_prev = direction  # set previous direction
             direction = -grad + beta * direction_prev  # update direction
 
         # Perform linear search
         t_start_LS = time.time()
-        print('Initiating linear search in direction: ', direction)
-        p_new, psi_new= linear_search(p, direction, f, f_prime)
+        print('\nInitiating linear search in direction: ', direction)
+        p_new, psi_new = linear_search(p, direction, f, f_prime)
         print('Minutes spent in linear search: ', (time.time() - t_start_LS) / 60)
         print('Current norm: ', current_norm, 'Tol * Norm_0: ', tol, 'Difference (CN-TOL): ', current_norm - tol)
+        print('Current best params: ', p_new.params)
 
         # Update to current values
         p = p_new
         psi = psi_new
         grad_prev = grad
 
-        print('Minutes spent in this CG iteration: ', (time.time()-t_start_CG_iter)/60)
+        print('\nMinutes spent in this CG iteration: ', (time.time()-t_start_CG_iter)/60)
         sys.stdout.flush()
 
-    print('Conjugate gradient complete. Finished in ', i+1, '/', max_iter, ' iterations')
+        if i==max_iter-1:
+            print('\nCG reached max iterations and did not converge.')
+
+    print('\nConjugate gradient complete. Finished in ', i+1, '/', max_iter, ' iterations with tolerance', tol)
+    print('Final parameters:', p.params)
+    print('Final norm:', current_norm)
     return p
 
 
