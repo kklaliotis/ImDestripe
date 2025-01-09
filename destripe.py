@@ -616,6 +616,7 @@ def linear_search(p, direction, f, f_prime, n_iter=50, tol=10**-5):
     # p.params = p.params + alpha * direction
 
     best_epsilon, best_psi = cost_function(p, f)
+    best_p = copy.deepcopy(p)
 
     # Simple linear search
     working_p = copy.deepcopy(p)
@@ -672,26 +673,26 @@ def linear_search(p, direction, f, f_prime, n_iter=50, tol=10**-5):
         hdu = fits.PrimaryHDU(working_resids)
         hdu.writeto(test_image_dir+'LS_Residuals_'+str(k)+'.fits', overwrite=True)
 
+        if working_epsilon < best_epsilon:
+            best_epsilon = working_epsilon
+            best_p = copy.deepcopy(working_p)
+            best_psi=working_psi
+
         if convergence_crit < tol: # KL this was an arbitrary choice
             print("Linear search convergence via crit<", tol, " in ", k, " iterations and ",
                   (time.time() - t0_ls_iter) / 60, "Minutes.")
-            best_p = copy.deepcopy(working_p)
-            best_psi = working_psi
-            break
+            return best_p, best_psi
 
         if d_cost > 0:
             alpha_max = alpha_test
             continue  # go to next iteration
-
         elif d_cost < 0:
             alpha_min = alpha_test
             continue
-
         else:
             print("Linear search convergence via d_cost=0 in ", k, " iterations and ",
                   (time.time()-t0_ls_iter)/60, "Minutes.")
-            best_p = copy.deepcopy(working_p)
-            best_psi = working_psi
+            return best_p, best_psi
 
 
 
