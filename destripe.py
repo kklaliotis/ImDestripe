@@ -768,16 +768,6 @@ def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
             direction_prev = direction  # set previous direction
             direction = -grad + beta * direction_prev
 
-            # Check conjugacy - if lost, reset to steepest descent
-            grad_dot = np.abs(np.sum(grad * grad_prev))
-            if grad_dot > 0.2 * np.sum(np.square(grad)):  # threshold for orthogonality
-                print("Conjugacy lost, resetting to steepest descent")
-                beta = 0
-                direction = -grad
-
-            else:
-                direction = -grad + beta * direction_prev  # update direction
-
         if current_norm < tol:
             print('\nConvergence reached at iteration:', i + 1)
             break
