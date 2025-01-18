@@ -505,12 +505,14 @@ def cost_function(p, f):
         scaid_A = m.group(2)
         I_A = sca_img(obsid_A, scaid_A)
         I_A.apply_noise()
+        I_A.image,object_mask = apply_object_mask(I_A.image)
 
         params_mat_A = p.forward_par(j)  # Make destriping params into an image
         I_A.image = I_A.image - params_mat_A  # Update I_A.image to have the params image subtracted off
 
+        I_A.image = apply_object_mask(I_A.image, mask=object_mask)[0]  # re-apply mask to make mask pxls 0 again
         I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
-        I_A.image,object_mask = apply_object_mask(I_A.image)
+
         if obsid_A=='670' and scaid_A=='10':
             hdu = fits.PrimaryHDU(I_A.image)
             hdu.writeto(test_image_dir+'670_10_I_A_sub_masked.fits', overwrite=True)
@@ -653,6 +655,10 @@ def linear_search(p, direction, f, f_prime, n_iter=50, tol=10**-5):
 
         alpha_test = .5 * (alpha_min + alpha_max)
 
+        if k % 10 == 0: # Periodically make sure that the underlying p.params and direction are not changing
+            print('\nTEST: alpha=0, iteration ', k)
+            alpha_test = 0
+
         working_params = p.params + alpha_test * direction
         working_p.params = working_params
 
@@ -662,7 +668,7 @@ def linear_search(p, direction, f, f_prime, n_iter=50, tol=10**-5):
         d_cost = np.sum(working_resids * direction)
         convergence_crit = (alpha_max-alpha_min)/2
 
-        print('Ending LS iteration', k)
+        print('\nEnding LS iteration', k)
         print('Current d_cost = ', d_cost, 'epsilon = ', working_epsilon)
         print("Working resids:", working_resids)
         print("Working params:", working_p.params)
