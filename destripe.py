@@ -380,8 +380,6 @@ def test_transpose(u,v, M, MT):
     two = np.sum(v*MTu)
     print('Transpose test: ', one==two)
 
-test_transpose(np.array([1,1]), np.array([2,2]))
-
 
 def transpose_par(array):
     """
