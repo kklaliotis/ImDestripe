@@ -373,6 +373,15 @@ def transpose_interpolate( image_A, wcs_A, image_B, original_image):
                                             num_coords,
                                             original_image)
 
+def test_transpose(u,v, M, MT):
+    Mv = M*v
+    MTu=MT*u
+    one = np.sum(u * Mv)
+    two = np.sum(v*MTu)
+    print('Transpose test: ', one==two)
+
+test_transpose(np.array([1,1]), np.array([2,2]))
+
 
 def transpose_par(array):
     """
@@ -594,6 +603,8 @@ def residual_function(psi, f_prime):
 
                 gradient_original *= I_B.g_eff
 
+                test_transpose( np.full(2, I_B.shape[0]), np.full(1, I_B.shape[0]), gradient_original, gradient_interpolated)
+
                 if obsid_A == '670' and scaid_A == '10':
                     hdu = fits.PrimaryHDU(gradient_original)
                     hdu.writeto(test_image_dir+'Fp_norm_Psi_B_'+obsid_B+scaid_B+'.fits', overwrite=True)
@@ -656,8 +667,8 @@ def linear_search(p, direction, f, f_prime, n_iter=50, tol=10**-5):
         alpha_test = .5 * (alpha_min + alpha_max)
 
         if k % 10 == 0: # Periodically make sure that the underlying p.params and direction are not changing
-            print('\nTEST: alpha=0, iteration ', k)
-            alpha_test = 0
+            print('\nTEST: alpha=0.0049, iteration ', k)
+            alpha_test = 0.0049
 
         working_params = p.params + alpha_test * direction
         working_p.params = working_params
