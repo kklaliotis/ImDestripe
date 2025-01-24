@@ -373,14 +373,6 @@ def transpose_interpolate( image_A, wcs_A, image_B, original_image):
                                             num_coords,
                                             original_image)
 
-def test_transpose(u,v, M, MT):
-    Mv = M*v
-    MTu=MT*u
-    one = np.sum(u * Mv)
-    two = np.sum(v*MTu)
-    print('Transpose test: ', one==two)
-
-
 def transpose_par(array):
     """
     transpose interpolates a params image (sums across rows)
@@ -600,8 +592,6 @@ def residual_function(psi, f_prime):
                 transpose_interpolate(gradient_interpolated, wcs_A, I_B, gradient_original)
 
                 gradient_original *= I_B.g_eff
-
-                test_transpose( np.full(2, I_B.shape[0]), np.full(1, I_B.shape[0]), gradient_original, gradient_interpolated)
 
                 if obsid_A == '670' and scaid_A == '10':
                     hdu = fits.PrimaryHDU(gradient_original)
