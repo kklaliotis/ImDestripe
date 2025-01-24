@@ -51,7 +51,6 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
                                              interpolated_image)
 
     sys.stdout.flush()
-    sys.stderr.flush()
 
 
 def transpose_interpolate( image_A, wcs_A, image_B, original_image):
@@ -93,9 +92,19 @@ def test_interp():
     B_interp = np.zeros_like(I_B.image)
     A_interp = np.zeros_like(I_A.image)
     interpolate_image_bilinear(I_B, I_A, B_interp)
+    B_interp/=I_A.g_eff
     interpolate_image_bilinear(I_A, I_B, A_interp)
+    A_interp/=I_B.g_eff
 
     interp_test(I_A, I_B, B_interp, A_interp)
+
+    hdu = fits.PrimaryHDU(I_A.image)
+    hdul = fits.HDUList(hdu)
+    for i in [I_B,A_interp,B_interp]:
+        hdu = fits.ImageHDU(i)
+        hdul.append(hdu)
+    hdul.writeto('INTERP_TESTS.fits', overwrite=True)
+
 
 # Run the test
 test_interp()
