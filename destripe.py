@@ -431,30 +431,6 @@ else:
     print("Overlap matrix complete. Duration: ", (time.time() - ovmat_t0) / 60, 'Minutes')
 
 
-# KL Lol this doesnt even get used I dont think
-# def make_interpolated_images():
-#     """
-#     Iterate through all the SCAs and create interpolated
-#     versions of them from all the other SCAs that overlap them
-#     :return: None
-#     """
-#     for i, sca_a in enumerate(all_scas):
-#         m = re.search(r'_(\d+)_(\d+)', sca_a)
-#         obsid_A = m.group(1)
-#         scaid_A = m.group(2)
-#         print('Img A: ' + obsid_A + '_' + scaid_A)
-#         I_A = sca_img(obsid_A, scaid_A)
-#         I_A.apply_noise()
-#         I_A.apply_permanent_mask()
-#         # I_A.apply_object_mask() # KL: I think I don't want to apply the object mask until I compute psi_A
-#         # KL sidenote I also dont think it matters at this stage whether I_A has been masked ? or whether noise is there?
-#         # like I think I could take out apply noise and apply permanent mask here.
-#
-#         I_A.make_interpolated(i)
-
-        #print('SCAs remaining: ', len(all_scas)-i)
-
-
 # Function options. KL: Could move these to another .py file and call them as modules?
 # import functions and then function.quadratic etc.
 # Each of these will have the input x be a 2D array of a sca image.
@@ -488,339 +464,340 @@ def quadloss_prime(x, x0, b):
 
 # Optimization Functions
 
-def cost_function(p, f):
-    """
-    p: parameters object
-    f: keyword for function dictionary options; should also set an f_prime
-    """
-    print('Initializing cost function')
-    t0_cost = time.time()
-    psi = np.zeros((len(all_scas), 4088, 4088))
-    epsilon = 0
+def main():
 
-    for j, sca_a in enumerate(all_scas):
-        m = re.search(r'_(\d+)_(\d+)', sca_a)
-        obsid_A = m.group(1)
-        scaid_A = m.group(2)
-        I_A = sca_img(obsid_A, scaid_A)
-        I_A.apply_noise()
-        I_A.image,object_mask = apply_object_mask(I_A.image)
+    def cost_function(p, f):
+        """
+        p: parameters object
+        f: keyword for function dictionary options; should also set an f_prime
+        """
+        print('Initializing cost function')
+        t0_cost = time.time()
+        psi = np.zeros((len(all_scas), 4088, 4088))
+        epsilon = 0
 
-        params_mat_A = p.forward_par(j)  # Make destriping params into an image
-        I_A.image = I_A.image - params_mat_A  # Update I_A.image to have the params image subtracted off
+        for j, sca_a in enumerate(all_scas):
+            m = re.search(r'_(\d+)_(\d+)', sca_a)
+            obsid_A = m.group(1)
+            scaid_A = m.group(2)
+            I_A = sca_img(obsid_A, scaid_A)
+            I_A.apply_noise()
+            I_A.image,object_mask = apply_object_mask(I_A.image)
 
-        I_A.image = apply_object_mask(I_A.image, mask=object_mask)[0]  # re-apply mask to make mask pxls 0 again
-        I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
+            params_mat_A = p.forward_par(j)  # Make destriping params into an image
+            I_A.image = I_A.image - params_mat_A  # Update I_A.image to have the params image subtracted off
 
-        if obsid_A=='670' and scaid_A=='10':
-            hdu = fits.PrimaryHDU(I_A.image)
-            hdu.writeto(test_image_dir+'670_10_I_A_sub_masked.fits', overwrite=True)
+            I_A.image = apply_object_mask(I_A.image, mask=object_mask)[0]  # re-apply mask to make mask pxls 0 again
+            I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
 
-        J_A_image = I_A.make_interpolated(j, params=p)  # make_interpolated uses I_A.image so I think this I_A has the params off
-                                                # KL actually i am very much not sure about this and think this may be The Problem
+            if obsid_A=='670' and scaid_A=='10':
+                hdu = fits.PrimaryHDU(I_A.image)
+                hdu.writeto(test_image_dir+'670_10_I_A_sub_masked.fits', overwrite=True)
 
-        J_A_image *= I_A.mask # apply permanent mask from A
-        J_A_image = apply_object_mask(J_A_image, mask=object_mask)[0]
-        if obsid_A=='670' and scaid_A=='10':
-            hdu = fits.PrimaryHDU(J_A_image)
-            hdu.writeto(test_image_dir+'670_10_J_A_masked.fits', overwrite=True)
+            J_A_image = I_A.make_interpolated(j, params=p)  # make_interpolated uses I_A.image so I think this I_A has the params off
+                                                    # KL actually i am very much not sure about this and think this may be The Problem
 
-        psi[j, :, :] = np.where(J_A_image != 0, I_A.image - J_A_image, 0)
+            J_A_image *= I_A.mask # apply permanent mask from A
+            J_A_image = apply_object_mask(J_A_image, mask=object_mask)[0]
+            if obsid_A=='670' and scaid_A=='10':
+                hdu = fits.PrimaryHDU(J_A_image)
+                hdu.writeto(test_image_dir+'670_10_J_A_masked.fits', overwrite=True)
 
-        # Compute local epsilon
-        local_epsilon = np.sum(f(psi[j, :, :]))
+            psi[j, :, :] = np.where(J_A_image != 0, I_A.image - J_A_image, 0)
 
-        if obsid_A=='670' and scaid_A=='10':
-            print('Image A mean, std: ', np.mean(I_A.image), np.std(I_A.image))
-            print('Image B mean, std: ', np.mean(J_A_image), np.std(J_A_image))
-            print ('Psi mean, std: ', np.mean(psi[j, :, :]), np.std(psi[j, :, :]) )
-            print('f(Psi) mean, std:', np.mean(f(psi[j, :, :])), np.std(f(psi[j, :, :])))
-            print(f"Local epsilon for SCA {j}: {local_epsilon}")
+            # Compute local epsilon
+            local_epsilon = np.sum(f(psi[j, :, :]))
 
-        epsilon += local_epsilon
+            if obsid_A=='670' and scaid_A=='10':
+                print('Image A mean, std: ', np.mean(I_A.image), np.std(I_A.image))
+                print('Image B mean, std: ', np.mean(J_A_image), np.std(J_A_image))
+                print ('Psi mean, std: ', np.mean(psi[j, :, :]), np.std(psi[j, :, :]) )
+                print('f(Psi) mean, std:', np.mean(f(psi[j, :, :])), np.std(f(psi[j, :, :])))
+                print(f"Local epsilon for SCA {j}: {local_epsilon}")
 
-    print('Ending cost function. Minutes elapsed: ', (time.time()-t0_cost)/60)
-    return epsilon, psi
+            epsilon += local_epsilon
 
-
-def residual_function(psi, f_prime):
-    """
-    Calculate the residuals.
-    :param psi: the image difference array (I_A - J_A) (N_SCA, 4088, 4088)
-    :param f_prime: the function to be used to calculate the gradient.
-            in the future this should be set by default based on what you pass for f
-    :return: resids, a 2D array with one row per SCA and one col per image-row-parameter
-    """
-    resids = (parameters('constant', 4088).params)
-    print('\nResidual calculation started')
-    for k, sca_a in enumerate(all_scas):
-
-        # Go and get the WCS object for image A
-        obsid_A, scaid_A = get_ids(sca_a)
-        file = fits.open(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits')
-        wcs_A = wcs.WCS(file[0].header)
-        file.close()
-
-        # Calculate and then transpose the gradient of I_A-J_A
-        gradient_interpolated = f_prime(psi[k, :, :])
-        if obsid_A == '670' and scaid_A == '10':
-            hdu = fits.PrimaryHDU(gradient_interpolated)
-            hdu.writeto(test_image_dir+'Fp_Psi_670_10.fits', overwrite=True)
-
-        term_1 = transpose_par(gradient_interpolated)
-
-        # Retrieve the effective gain and N_eff to normalize the gradient before transposing back
-        g_eff_A, n_eff_A = get_effective_gain(sca_a)
-
-        # Avoid dividing by zero
-        valid_mask = n_eff_A != 0
-        gradient_interpolated[valid_mask] = gradient_interpolated[valid_mask] / (
-                    g_eff_A[valid_mask] * n_eff_A[valid_mask])
-        gradient_interpolated[~valid_mask] = 0
-
-        if obsid_A == '670' and scaid_A == '10':
-            hdu = fits.PrimaryHDU(gradient_interpolated)
-            hdu.writeto(test_image_dir+'Fp_norm_Psi_670_10.fits', overwrite=True)
-
-        for j, sca_b in enumerate(all_scas):
-            obsid_B, scaid_B = get_ids(sca_b)
-
-            if obsid_B != obsid_A and ov_mat[k, j] != 0:
-                I_B = sca_img(obsid_B, scaid_B)
-                gradient_original = np.zeros(I_B.shape)
-
-                transpose_interpolate(gradient_interpolated, wcs_A, I_B, gradient_original)
-
-                gradient_original *= I_B.g_eff
-
-                if obsid_A == '670' and scaid_A == '10':
-                    hdu = fits.PrimaryHDU(gradient_original)
-                    hdu.writeto(test_image_dir+'Fp_norm_Psi_B_'+obsid_B+scaid_B+'.fits', overwrite=True)
-
-                term_2 = transpose_par(gradient_original)
-                if obsid_A == '670' and scaid_A == '10':
-                    print('Terms 1 and 2 means: ', np.mean(term_1), np.mean(term_2))
-                    print('G_eff_a, G_eff_b means: ', np.mean(g_eff_A), np.mean(I_B.g_eff))
-
-                resids[j,:] += term_2
-
-        resids[k, :] -= term_1
-
-    print('Residuals calculation finished\n')
-    return resids
+        print('Ending cost function. Minutes elapsed: ', (time.time()-t0_cost)/60)
+        return epsilon, psi
 
 
-def linear_search(p, direction, f, f_prime, n_iter=50, tol=10**-5):
+    def residual_function(psi, f_prime):
+        """
+        Calculate the residuals.
+        :param psi: the image difference array (I_A - J_A) (N_SCA, 4088, 4088)
+        :param f_prime: the function to be used to calculate the gradient.
+                in the future this should be set by default based on what you pass for f
+        :return: resids, a 2D array with one row per SCA and one col per image-row-parameter
+        """
+        resids = (parameters('constant', 4088).params)
+        print('\nResidual calculation started')
+        for k, sca_a in enumerate(all_scas):
 
-    # KL: first version of LS using constant direction depth alpha
-    # alpha = 0.1  # Step size
-    # p.params = p.params + alpha * direction
+            # Go and get the WCS object for image A
+            obsid_A, scaid_A = get_ids(sca_a)
+            file = fits.open(tempfile + 'interpolations/' + obsid_A + '_' + scaid_A + '_interp.fits')
+            wcs_A = wcs.WCS(file[0].header)
+            file.close()
 
-    best_epsilon, best_psi = cost_function(p, f)
-    best_p = copy.deepcopy(p)
+            # Calculate and then transpose the gradient of I_A-J_A
+            gradient_interpolated = f_prime(psi[k, :, :])
+            if obsid_A == '670' and scaid_A == '10':
+                hdu = fits.PrimaryHDU(gradient_interpolated)
+                hdu.writeto(test_image_dir+'Fp_Psi_670_10.fits', overwrite=True)
 
-    # Simple linear search
-    working_p = copy.deepcopy(p)
+            term_1 = transpose_par(gradient_interpolated)
 
-    if not np.any(p.params):
-        alpha_max = 2**8
-    else:
-        alpha_max = 2**8 / np.max(p.params)
+            # Retrieve the effective gain and N_eff to normalize the gradient before transposing back
+            g_eff_A, n_eff_A = get_effective_gain(sca_a)
 
-    alpha_min = -alpha_max
+            # Avoid dividing by zero
+            valid_mask = n_eff_A != 0
+            gradient_interpolated[valid_mask] = gradient_interpolated[valid_mask] / (
+                        g_eff_A[valid_mask] * n_eff_A[valid_mask])
+            gradient_interpolated[~valid_mask] = 0
 
-    for k in range(1, n_iter):
-        t0_ls_iter = time.time()
+            if obsid_A == '670' and scaid_A == '10':
+                hdu = fits.PrimaryHDU(gradient_interpolated)
+                hdu.writeto(test_image_dir+'Fp_norm_Psi_670_10.fits', overwrite=True)
 
-        if k==1:
-            print('\n!!!! Inside linear search function now.')
-            print("Direction:", direction)
-            print("Initial params:", p.params)
-            print("Initial epsilon:", best_epsilon)
+            for j, sca_b in enumerate(all_scas):
+                obsid_B, scaid_B = get_ids(sca_b)
 
-        if k == n_iter - 1:
-            print('WARNING: Linear search did not converge!! This is going to break because best_p is not assigned.')
+                if obsid_B != obsid_A and ov_mat[k, j] != 0:
+                    I_B = sca_img(obsid_B, scaid_B)
+                    gradient_original = np.zeros(I_B.shape)
 
-        # KL: previous version of LS, using adaptive direction depth alpha
-        # current_step = alpha * k / (1 + k)
-        # clipped_direction = np.clip(direction,
-        #                          -np.abs(working_p.params),
-        #                          np.abs(working_p.params))
+                    transpose_interpolate(gradient_interpolated, wcs_A, I_B, gradient_original)
 
-        # candidate_params = working_p.params + current_step * direction
-        # candidate_params = np.clip(candidate_params,
-        #                            working_p.params - 10*np.std(working_p.params),
-        #                            working_p.params + 10*np.std(working_p.params))
+                    gradient_original *= I_B.g_eff
 
-        alpha_test = .5 * (alpha_min + alpha_max)
+                    if obsid_A == '670' and scaid_A == '10':
+                        hdu = fits.PrimaryHDU(gradient_original)
+                        hdu.writeto(test_image_dir+'Fp_norm_Psi_B_'+obsid_B+scaid_B+'.fits', overwrite=True)
 
-        if k % 10 == 0: # Periodically make sure that the underlying p.params and direction are not changing
-            print('\nTEST: alpha=0.0049, iteration ', k)
-            alpha_test = 0.0049
+                    term_2 = transpose_par(gradient_original)
+                    if obsid_A == '670' and scaid_A == '10':
+                        print('Terms 1 and 2 means: ', np.mean(term_1), np.mean(term_2))
+                        print('G_eff_a, G_eff_b means: ', np.mean(g_eff_A), np.mean(I_B.g_eff))
 
-        working_params = p.params + alpha_test * direction
-        working_p.params = working_params
+                    resids[j,:] += term_2
 
-        working_epsilon, working_psi = cost_function(working_p, f)
-        working_resids = residual_function(working_psi, f_prime)
+            resids[k, :] -= term_1
 
-        d_cost = np.sum(working_resids * direction)
-        convergence_crit = (alpha_max-alpha_min)/2
+        print('Residuals calculation finished\n')
+        return resids
 
-        print('\nEnding LS iteration', k)
-        print('Current d_cost = ', d_cost, 'epsilon = ', working_epsilon)
-        print("Working resids:", working_resids)
-        print("Working params:", working_p.params)
-        print('Current alpha range (min, test, max): ', (alpha_min, alpha_test, alpha_max))
-        print('Current convergence criterion (alpha_max-alpha_min)/2: ', convergence_crit)
-        print('Time spent in this LS iteration:', (time.time()-t0_ls_iter)/60, "Minutes."'\n')
 
-        hdu = fits.PrimaryHDU(working_resids)
-        hdu.writeto(test_image_dir+'LS_Residuals_'+str(k)+'.fits', overwrite=True)
+    def linear_search(p, direction, f, f_prime, n_iter=50, tol=10**-5):
 
-        if working_epsilon < best_epsilon:
-            best_epsilon = working_epsilon
-            best_p = copy.deepcopy(working_p)
-            best_psi=working_psi
+        # KL: first version of LS using constant direction depth alpha
+        # alpha = 0.1  # Step size
+        # p.params = p.params + alpha * direction
 
-        if convergence_crit < tol: # KL this was an arbitrary choice
-            print("Linear search convergence via crit<", tol, " in ", k, " iterations and ",
-                  (time.time() - t0_ls_iter) / 60, "Minutes.")
-            return best_p, best_psi
+        best_epsilon, best_psi = cost_function(p, f)
+        best_p = copy.deepcopy(p)
 
-        if d_cost > 0:
-            alpha_max = alpha_test
-            continue  # go to next iteration
-        elif d_cost < 0:
-            alpha_min = alpha_test
-            continue
+        # Simple linear search
+        working_p = copy.deepcopy(p)
+
+        if not np.any(p.params):
+            alpha_max = 2**8
         else:
-            print("Linear search convergence via d_cost=0 in ", k, " iterations and ",
-                  (time.time()-t0_ls_iter)/60, "Minutes.")
-            return best_p, best_psi
+            alpha_max = 2**8 / np.max(p.params)
+
+        alpha_min = -alpha_max
+
+        for k in range(1, n_iter):
+            t0_ls_iter = time.time()
+
+            if k==1:
+                print('\n!!!! Inside linear search function now.')
+                print("Direction:", direction)
+                print("Initial params:", p.params)
+                print("Initial epsilon:", best_epsilon)
+
+            if k == n_iter - 1:
+                print('WARNING: Linear search did not converge!! This is going to break because best_p is not assigned.')
+
+            # KL: previous version of LS, using adaptive direction depth alpha
+            # current_step = alpha * k / (1 + k)
+            # clipped_direction = np.clip(direction,
+            #                          -np.abs(working_p.params),
+            #                          np.abs(working_p.params))
+
+            # candidate_params = working_p.params + current_step * direction
+            # candidate_params = np.clip(candidate_params,
+            #                            working_p.params - 10*np.std(working_p.params),
+            #                            working_p.params + 10*np.std(working_p.params))
+
+            alpha_test = .5 * (alpha_min + alpha_max)
+
+            working_params = p.params + alpha_test * direction
+            working_p.params = working_params
+
+            working_epsilon, working_psi = cost_function(working_p, f)
+            working_resids = residual_function(working_psi, f_prime)
+
+            d_cost = np.sum(working_resids * direction)
+            convergence_crit = (alpha_max-alpha_min)/2
+
+            print('\nEnding LS iteration', k)
+            print('Current d_cost = ', d_cost, 'epsilon = ', working_epsilon)
+            print("Working resids:", working_resids)
+            print("Working params:", working_p.params)
+            print('Current alpha range (min, test, max): ', (alpha_min, alpha_test, alpha_max))
+            print('Current convergence criterion (alpha_max-alpha_min)/2: ', convergence_crit)
+            print('Time spent in this LS iteration:', (time.time()-t0_ls_iter)/60, "Minutes."'\n')
+
+            hdu = fits.PrimaryHDU(working_resids)
+            hdu.writeto(test_image_dir+'LS_Residuals_'+str(k)+'.fits', overwrite=True)
+
+            if working_epsilon < best_epsilon:
+                best_epsilon = working_epsilon
+                best_p = copy.deepcopy(working_p)
+                best_psi=working_psi
+
+            if convergence_crit < tol: # KL this was an arbitrary choice
+                print("Linear search convergence via crit<", tol, " in ", k, " iterations and ",
+                      (time.time() - t0_ls_iter) / 60, "Minutes.")
+                return best_p, best_psi
+
+            if d_cost > 0:
+                alpha_max = alpha_test
+                continue  # go to next iteration
+            elif d_cost < 0:
+                alpha_min = alpha_test
+                continue
+            else:
+                print("Linear search convergence via d_cost=0 in ", k, " iterations and ",
+                      (time.time()-t0_ls_iter)/60, "Minutes.")
+                return best_p, best_psi
 
 
 
-            # new_p = copy.deepcopy(working_p)
-        # new_p.params = working_params
-        #
-        # new_epsilon = working_epsilon
-        # new_psi = working_psi
+                # new_p = copy.deepcopy(working_p)
+            # new_p.params = working_params
+            #
+            # new_epsilon = working_epsilon
+            # new_psi = working_psi
 
-        # if working_epsilon < best_epsilon:
-            # best_p = copy.deepcopy(working_p)
-        #     best_epsilon = working_epsilon
-            # best_psi = working_psi
-        # else:
-        #     break
-        # print(f'Linear search iteration {k}: Δε = {best_epsilon:.4e}, '
-        #       f'Time = {(time.time() - t0_ls_iter) / 60:.4f} Minutes')
+            # if working_epsilon < best_epsilon:
+                # best_p = copy.deepcopy(working_p)
+            #     best_epsilon = working_epsilon
+                # best_psi = working_psi
+            # else:
+            #     break
+            # print(f'Linear search iteration {k}: Δε = {best_epsilon:.4e}, '
+            #       f'Time = {(time.time() - t0_ls_iter) / 60:.4f} Minutes')
 
-    return best_p, best_psi
+        return best_p, best_psi
 
 
-# Conjugate Gradient Descent
-def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
-    """
-    :param p: p is a parameters object
-    :param tol:
-    :param max_iter:
-    :param f: function to use for cost function
-    :param f_prime: derivative of f. KL: eventually f should dictate f prime
-    :param alpha: magnitude of direction steps to take in linear search function
-    :return:
-    """
-    print('Starting conjugate gradient optimization\n')
+    # Conjugate Gradient Descent
+    def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
+        """
+        :param p: p is a parameters object
+        :param tol:
+        :param max_iter:
+        :param f: function to use for cost function
+        :param f_prime: derivative of f. KL: eventually f should dictate f prime
+        :param alpha: magnitude of direction steps to take in linear search function
+        :return:
+        """
+        print('Starting conjugate gradient optimization\n')
 
-    # Initialize variables
-    grad_prev = None  # No previous gradient initially
-    direction = None  # No initial direction
+        # Initialize variables
+        grad_prev = None  # No previous gradient initially
+        direction = None  # No initial direction
 
-    t_start_cost = time.time()
-    print('Starting initial cost function')
-    global test_image_dir
-    test_image_dir = 'test_images/'+str(0)+'/'
-    psi = cost_function(p, f)[1]
-    final_iter = 0.
-    print('Minutes in initial cost function: ', (time.time() - t_start_cost)/60, '\n')
-    sys.stdout.flush()
-
-    for i in range(max_iter):
-        print("\nCG Iteration:", i+1)
-        if not os.path.exists('test_images/'+str(i+1)):
-            os.makedirs('test_images/'+str(i+1))
-        test_image_dir = 'test_images/' + str(i+1) + '/'
-        t_start_CG_iter = time.time()
-
-        # Compute the gradient
-        grad = residual_function(psi, f_prime)
-        print('Minutes spent in residual function:', (time.time() - t_start_CG_iter) / 60)
+        t_start_cost = time.time()
+        print('Starting initial cost function')
+        global test_image_dir
+        test_image_dir = 'test_images/'+str(0)+'/'
+        psi = cost_function(p, f)[1]
+        final_iter = 0.
+        print('Minutes in initial cost function: ', (time.time() - t_start_cost)/60, '\n')
         sys.stdout.flush()
 
-        # Compute the norm of the gradient
-        current_norm = np.linalg.norm(grad)
+        for i in range(max_iter):
+            print("\nCG Iteration:", i+1)
+            if not os.path.exists('test_images/'+str(i+1)):
+                os.makedirs('test_images/'+str(i+1))
+            test_image_dir = 'test_images/' + str(i+1) + '/'
+            t_start_CG_iter = time.time()
 
-        if i == 0:
-            print('Initial gradient: ', grad)
-            norm_0 = np.linalg.norm(grad)
-            print('Initial norm: ', norm_0)
-            tol = tol * norm_0
-            direction = -grad  # First direction is negative grad
-            beta = 0  # First beta is zero
-        else:
-            beta = np.sum(np.square(grad)) / np.sum(np.square(grad_prev))  # Calculate beta (direction scaling)
-            print('Current Beta: ', beta)
-            direction_prev = direction  # set previous direction
-            direction = -grad + beta * direction_prev
+            # Compute the gradient
+            grad = residual_function(psi, f_prime)
+            print('Minutes spent in residual function:', (time.time() - t_start_CG_iter) / 60)
+            sys.stdout.flush()
 
-        if current_norm < tol:
-            print('\nConvergence reached at iteration:', i + 1)
-            break
+            # Compute the norm of the gradient
+            current_norm = np.linalg.norm(grad)
 
-        # Perform linear search
-        t_start_LS = time.time()
-        print('\nInitiating linear search in direction: ', direction)
-        p_new, psi_new = linear_search(p, direction, f, f_prime)
-        print('Minutes spent in linear search: ', (time.time() - t_start_LS) / 60)
-        print('Current norm: ', current_norm, 'Tol * Norm_0: ', tol, 'Difference (CN-TOL): ', current_norm - tol)
-        print('Current best params: ', p_new.params)
+            if i == 0:
+                print('Initial gradient: ', grad)
+                norm_0 = np.linalg.norm(grad)
+                print('Initial norm: ', norm_0)
+                tol = tol * norm_0
+                direction = -grad  # First direction is negative grad
+                beta = 0  # First beta is zero
+            else:
+                beta = np.sum(np.square(grad)) / np.sum(np.square(grad_prev))  # Calculate beta (direction scaling)
+                print('Current Beta: ', beta)
+                direction_prev = direction  # set previous direction
+                direction = -grad + beta * direction_prev
 
-        # Update to current values
-        p = p_new
-        psi = psi_new
-        grad_prev = grad
-        direction_prev = direction
+            if current_norm < tol:
+                print('\nConvergence reached at iteration:', i + 1)
+                break
 
-        print('\nMinutes spent in this CG iteration: ', (time.time()-t_start_CG_iter)/60)
-        sys.stdout.flush()
+            # Perform linear search
+            t_start_LS = time.time()
+            print('\nInitiating linear search in direction: ', direction)
+            p_new, psi_new = linear_search(p, direction, f, f_prime)
+            print('Minutes spent in linear search: ', (time.time() - t_start_LS) / 60)
+            print('Current norm: ', current_norm, 'Tol * Norm_0: ', tol, 'Difference (CN-TOL): ', current_norm - tol)
+            print('Current best params: ', p_new.params)
 
-        if i==max_iter-1:
-            print('\nCG reached max iterations and did not converge.')
+            # Update to current values
+            p = p_new
+            psi = psi_new
+            grad_prev = grad
+            direction_prev = direction
 
-    print('\nConjugate gradient complete. Finished in ', i+1, '/', max_iter, ' iterations with tolerance', tol)
-    print('Final parameters:', p.params)
-    print('Final norm:', current_norm)
-    return p
+            print('\nMinutes spent in this CG iteration: ', (time.time()-t_start_CG_iter)/60)
+            sys.stdout.flush()
+
+            if i==max_iter-1:
+                print('\nCG reached max iterations and did not converge.')
+
+        print('\nConjugate gradient complete. Finished in ', i+1, '/', max_iter, ' iterations with tolerance', tol)
+        print('Final parameters:', p.params)
+        print('Final norm:', current_norm)
+        return p
 
 
-# Initialize parameters
-p0 = parameters('constant', 4088)
+    # Initialize parameters
+    p0 = parameters('constant', 4088)
 
-# Do it
-p = conjugate_gradient(p0, quadratic, quad_prime)
-hdu = fits.PrimaryHDU(p.params)
-hdu.writeto(tempfile + filter + '/' + 'final_params.fits', overwrite=True)
-print(tempfile + filter + '/' + 'final_params.fits created \n')
+    # Do it
+    p = conjugate_gradient(p0, quadratic, quad_prime)
+    hdu = fits.PrimaryHDU(p.params)
+    hdu.writeto(tempfile + filter + '/' + 'final_params.fits', overwrite=True)
+    print(tempfile + filter + '/' + 'final_params.fits created \n')
 
-for i,sca in enumerate(all_scas):
-    obsid, scaid = get_ids(sca)
-    this_sca = sca_img(obsid, scaid)
-    this_param_set = p.forward_par(i)
-    ds_image = this_sca.image - this_param_set
+    for i,sca in enumerate(all_scas):
+        obsid, scaid = get_ids(sca)
+        this_sca = sca_img(obsid, scaid)
+        this_param_set = p.forward_par(i)
+        ds_image = this_sca.image - this_param_set
 
-    header = this_sca.w
-    hdu = fits.PrimaryHDU(ds_image, header=header)
-    hdu.writeto(tempfile + filter + '/DS_' + obsid + scaid + '.fits', overwrite=True)
+        header = this_sca.w
+        hdu = fits.PrimaryHDU(ds_image, header=header)
+        hdu.writeto(tempfile + filter + '/DS_' + obsid + scaid + '.fits', overwrite=True)
 
-print('Destriped images saved to' + tempfile + filter + '/DS_*.fits \n')
-print('Total hours elapsed: ', (time.time() - t0)/3600)
+    print('Destriped images saved to' + tempfile + filter + '/DS_*.fits \n')
+    print('Total hours elapsed: ', (time.time() - t0)/3600)
+
+if __name__=='__main__':
+    main()
