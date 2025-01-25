@@ -32,8 +32,12 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
     cols = int(image_B.shape[1])
     num_coords = coords.shape[0] // 2
 
+    print('fwd: rows, cols, ncoords ', rows, cols, num_coords)
+    print('fwd: coords 0-10', coords[0:10])
+    print('fwd: coords min, mean, max', np.min(coords), np.max(coords), np.mean(coords))
+
     sys.stdout.flush()
-    sys.stderr.flush()
+
     if mask is not None and isinstance(mask, np.ndarray):
         mask_geff = np.ones_like(image_A.image)
         pyimcom_croutines.bilinear_interpolation(mask,
@@ -69,13 +73,16 @@ def transpose_interpolate( image_A, wcs_A, image_B, original_image):
      rows = int(image_B.shape[0])
      cols = int(image_B.shape[1])
      num_coords = coords.shape[0] // 2
+     print('transpose: rows, cols, ncoords ', rows, cols, num_coords)
+     print('transpose: coords 0-10', coords[0:10])
+     print('transpose: coords min, mean, max', np.min(coords), np.max(coords), np.mean(coords))
+     sys.stderr.flush()
 
      pyimcom_croutines.bilinear_transpose(image_A,
                                             rows, cols,
                                             coords,
                                             num_coords,
                                             original_image)
-
 
 def interp_test(I_A, I_B, I_B_to_A, I_A_to_B):
     u = I_A.image
@@ -84,7 +91,26 @@ def interp_test(I_A, I_B, I_B_to_A, I_A_to_B):
     Mu=I_A_to_B
     lhs = np.sum(u*Mv)
     rhs = np.sum(v*Mu)
-    print(f'Interpolation test:\n A={I_A.obsid}_{I_A.scaid}, B={I_B.obsid}_{I_B.scaid}\n Diff={lhs-rhs}')
+    # Detailed diagnostics
+    print("\nDetailed Interpolation Test:")
+    print(f"A: {I_A.obsid}_{I_A.scaid}, B: {I_B.obsid}_{I_B.scaid}")
+
+    # Print array statistics
+    print("\nArray Statistics:")
+    print(f"u (A image):   mean={np.mean(u):.4f}, std={np.std(u):.4f}, min={np.min(u):.4f}, max={np.max(u):.4f}")
+    print(f"v (B image):   mean={np.mean(v):.4f}, std={np.std(v):.4f}, min={np.min(v):.4f}, max={np.max(v):.4f}")
+    print(f"Mv (B to A):   mean={np.mean(Mv):.4f}, std={np.std(Mv):.4f}, min={np.min(Mv):.4f}, max={np.max(Mv):.4f}")
+    print(f"Mu (A to B):   mean={np.mean(Mu):.4f}, std={np.std(Mu):.4f}, min={np.min(Mu):.4f}, max={np.max(Mu):.4f}")
+
+    # Compute dot products
+    lhs = np.sum(u * Mv)
+    rhs = np.sum(v * Mu)
+
+    print("\nDot Product Test:")
+    print(f"u·Mv = {lhs:.4f}")
+    print(f"v·Mu = {rhs:.4f}")
+    print(f"Difference:   {lhs - rhs:.4f}")
+
 
 def test_interp():
     I_A=sca_img("670","10")
@@ -93,14 +119,15 @@ def test_interp():
     A_interp = np.zeros_like(I_A.image)
     interpolate_image_bilinear(I_B, I_A, B_interp)
     B_interp/=I_A.g_eff
-    interpolate_image_bilinear(I_A, I_B, A_interp)
+    transpose_interpolate(I_A.image*I_A.g_eff, I_A.w, I_B, A_interp)
     A_interp/=I_B.g_eff
 
     interp_test(I_A, I_B, B_interp, A_interp)
+    stuff=[I_B.image,A_interp, B_interp]
 
-    hdu = fits.PrimaryHDU(I_A.image)
-    hdul = fits.HDUList(hdu)
-    for i in [I_B,A_interp,B_interp]:
+    phdu = fits.PrimaryHDU(I_A.image)
+    hdul = fits.HDUList([phdu])
+    for i in stuff:
         hdu = fits.ImageHDU(i)
         hdul.append(hdu)
     hdul.writeto('INTERP_TESTS.fits', overwrite=True)
