@@ -143,7 +143,7 @@ class sca_img:
 
     def make_interpolated(self, ind, params=None):
         """
-        Construct an version of this SCA interpolated from other, overlapping ones.
+        Construct a version of this SCA interpolated from other, overlapping ones.
         :return:
         """
         this_interp = np.zeros(self.shape)
