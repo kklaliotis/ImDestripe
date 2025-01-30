@@ -119,8 +119,8 @@ def test_interp():
     A_interp = np.zeros_like(I_A.image)
     interpolate_image_bilinear(I_B, I_A, B_interp)
     B_interp/=I_A.g_eff
-    transpose_interpolate(I_A.image, I_A.w, I_B, A_interp)
-    A_interp/=I_B.g_eff
+    transpose_interpolate(I_A.image*I_A.g_eff, I_A.w, I_B, A_interp)
+    #A_interp/=I_B.g_eff
 
     interp_test(I_A, I_B, B_interp, A_interp)
     stuff=[I_B.image,A_interp, B_interp]
