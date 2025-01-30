@@ -116,17 +116,6 @@ def test_interp():
     I_A=sca_img("670","10")
     I_B= sca_img("668","3")
 
-    # Test coord mappings
-    fwd_x, fwd_y, _ = compareutils.map_sca2sca(I_A.w, I_B.w, pad=0)
-    rev_x, rev_y, _ = compareutils.map_sca2sca(I_B.w, I_A.w, pad=0)
-
-    # Print some sample points
-    print("Forward vs Reverse coordinates:")
-    for i in range(5):
-        for j in range(5):
-            print(
-                f"Point ({i},{j}): Forward=({fwd_x[i, j]:.2f}, {fwd_y[i, j]:.2f}), Reverse=({rev_x[i, j]:.2f}, {rev_y[i, j]:.2f})")
-            
     B_interp = np.zeros_like(I_B.image)
     A_interp = np.zeros_like(I_A.image)
     interpolate_image_bilinear(I_B, I_A, B_interp)
