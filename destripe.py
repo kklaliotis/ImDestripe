@@ -244,7 +244,7 @@ class parameters:
         Reshape flattened parameters into 2D array with 1 row per sca and n_rows (in image) * params_per_row entries
         :return:
         """
-        self.params = np.reshape(self.params, ((len(all_scas), self.n_rows * self.params_per_row)))
+        self.params = np.reshape(self.params, (len(all_scas), self.n_rows * self.params_per_row))
         self.current_shape = '2D'
 
     def flatten_params(self):
@@ -494,8 +494,7 @@ def main():
                 hdu = fits.PrimaryHDU(I_A.image)
                 hdu.writeto(test_image_dir+'670_10_I_A_sub_masked.fits', overwrite=True)
 
-            J_A_image = I_A.make_interpolated(j, params=p)  # make_interpolated uses I_A.image so I think this I_A has the params off
-                                                    # KL actually i am very much not sure about this and think this may be The Problem
+            J_A_image = I_A.make_interpolated(j, params=p)
 
             J_A_image *= I_A.mask # apply permanent mask from A
             J_A_image = apply_object_mask(J_A_image, mask=object_mask)[0]
