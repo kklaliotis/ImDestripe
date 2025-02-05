@@ -25,12 +25,12 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
     """
 
     x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_A.w, image_B.w, pad=0)
-    coords = np.column_stack((x_target.ravel(), y_target.ravel())).flatten().astype(np.float32)
+    coords = np.column_stack((x_target.ravel(), y_target.ravel()))
 
     # Verify data just before C call
     rows = int(image_B.shape[0])
     cols = int(image_B.shape[1])
-    num_coords = coords.shape[0] // 2
+    num_coords = coords.shape[0]
 
     print('fwd: rows, cols, ncoords ', rows, cols, num_coords)
     print('fwd: coords 0-10', coords[0:10])
