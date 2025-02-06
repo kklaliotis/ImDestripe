@@ -63,6 +63,7 @@ class sca_img:
         w: the astropy.wcs object associated with this SCA
         mask: the full pixel mask that is used on this image. Is correct only after calling apply_permanent_mask
         g_eff : effective gain in each pixel of the image
+        params_subtracted : Check whether parameters have been subtracted from this image.
     Functions:
     apply_noise: apply the appropriate lab noise frame to the SCA image
     apply_permanent_mask: apply the SCA permanent pixel mask to the image
@@ -89,6 +90,7 @@ class sca_img:
         self.obsid = obsid
         self.scaid = scaid
         self.mask = np.ones(self.shape)
+        self.params_subtracted = False
 
         # Calculate effecive gain
         if not os.path.isfile(tempfile + obsid+'_'+scaid+'_geff.dat'):
@@ -113,7 +115,6 @@ class sca_img:
         """
         noiseframe = np.copy(fits.open(labnoise_prefix + self.obsid + '_' + self.scaid + '.fits')['PRIMARY'].data)
         self.image += noiseframe[4:4092, 4:4092]
-        return self.image
 
     def apply_permanent_mask(self):
         """
@@ -123,6 +124,16 @@ class sca_img:
         pm = np.copy(fits.open(permanent_mask)[0].data[int(self.scaid) - 1])
         self.image *= pm
         self.mask *= pm
+
+    def subtract_parameters(self, p, j):
+        if self.params_subtracted == True:
+            print('\n WARNING: PARAMS HAVE ALREADY BEEN SUBTRACTED. ABORTING NOW')
+            sys.exit()
+
+        params_image = p.forward_par(j)  # Make destriping params into an image
+        self.image = self.image - params_image  # Update I_A.image to have the params image subtracted off
+        self.params_subtracted = True
+
 
     def get_coordinates(self, pad=0.):
         """
@@ -159,8 +170,6 @@ class sca_img:
 
         t_a_start = time.time()
         print('Starting interpolation for SCA' + self.obsid + '_' + self.scaid)
-        # print('Time: ', t_a_start)
-        # print('Image A Checks: Image nonzero, G_eff nonzero', np.nonzero(self.image), np.nonzero(self.g_eff))
         sys.stdout.flush()
 
         N_BinA = 0
@@ -169,20 +178,15 @@ class sca_img:
             obsid_B, scaid_B = get_ids(sca_b)
 
             if obsid_B != self.obsid and ov_mat[ind, k] != 0:  # Check if this sca_b overlaps sca_a
-                #print('Image B: ' + obsid_B + '_' + scaid_B)
                 N_BinA += 1
-                I_B = sca_img(obsid_B, scaid_B)
+                I_B = sca_img(obsid_B, scaid_B) # Initialize image B
                 I_B.apply_noise()
 
                 if self.obsid=='670' and self.scaid=='10':
                     print('\nI_B: ', obsid_B, scaid_B, 'Pre-Param-Subtraction mean:', np.mean(I_B.image))
 
                 if params:
-                    params_mat = params.forward_par(k)
-                    I_B.image = I_B.image - params_mat #Subtract parameter B images from the image Bs
-                    if self.obsid == '670' and self.scaid == '10':
-                        print('Params mean: ', np.mean(params_mat))
-                        print('Post-Param-Subtraction mean:', np.mean(I_B.image))
+                    I_B.subtract_parameters(params, k)
 
                 I_B.apply_permanent_mask() # now I_B.mask is the permanent mask
                 B_interp = np.zeros_like(self.image)
@@ -209,7 +213,6 @@ class sca_img:
         this_interp = np.divide(this_interp, self.g_eff)
         hdu = fits.PrimaryHDU(this_interp, header=header)
         hdu.writeto(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits', overwrite=True)
-        #print(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits created \n')
         t_elapsed_a = time.time() - t_a_start
 
         del N_eff
@@ -480,12 +483,11 @@ def main():
             m = re.search(r'_(\d+)_(\d+)', sca_a)
             obsid_A = m.group(1)
             scaid_A = m.group(2)
-            I_A = sca_img(obsid_A, scaid_A)
+            I_A = sca_img(obsid_A, scaid_A)  # Inititalize image A
             I_A.apply_noise()
             I_A.image,object_mask = apply_object_mask(I_A.image)
 
-            params_mat_A = p.forward_par(j)  # Make destriping params into an image
-            I_A.image = I_A.image - params_mat_A  # Update I_A.image to have the params image subtracted off
+            I_A.subtract_parameters(p, j)
 
             I_A.image = apply_object_mask(I_A.image, mask=object_mask)[0]  # re-apply mask to make mask pxls 0 again
             I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
@@ -498,6 +500,7 @@ def main():
 
             J_A_image *= I_A.mask # apply permanent mask from A
             J_A_image = apply_object_mask(J_A_image, mask=object_mask)[0]
+
             if obsid_A=='670' and scaid_A=='10':
                 hdu = fits.PrimaryHDU(J_A_image)
                 hdu.writeto(test_image_dir+'670_10_J_A_masked.fits', overwrite=True)
