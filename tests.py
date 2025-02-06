@@ -68,11 +68,13 @@ def transpose_interpolate( image_A, wcs_A, image_B, original_image):
      :return:
      """
      x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_B.w, wcs_A, pad=0)
-     coords = np.column_stack((x_target.ravel(), y_target.ravel())).flatten().astype(np.float32)
+     coords = np.column_stack(( y_target.ravel(), x_target.ravel()))
 
+     # Verify data just before C call
      rows = int(image_B.shape[0])
      cols = int(image_B.shape[1])
-     num_coords = coords.shape[0] // 2
+     num_coords = coords.shape[0]
+
      print('transpose: rows, cols, ncoords ', rows, cols, num_coords)
      print('transpose: coords 0-10', coords[0:10])
      print('transpose: coords min, mean, max', np.min(coords), np.max(coords), np.mean(coords))
