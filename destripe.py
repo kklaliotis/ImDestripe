@@ -324,12 +324,12 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
     """
 
     x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_A.w, image_B.w, pad=0)
-    coords = np.column_stack((x_target.ravel(), y_target.ravel()))
+    coords = np.column_stack(( y_target.ravel(), x_target.ravel()))
 
     # Verify data just before C call
     rows = int(image_B.shape[0])
     cols = int(image_B.shape[1])
-    num_coords = coords.shape[0] // 2
+    num_coords = coords.shape[0]
 
     sys.stdout.flush()
     sys.stderr.flush()
@@ -364,11 +364,11 @@ def transpose_interpolate( image_A, wcs_A, image_B, original_image):
      :return:
      """
      x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_B.w, wcs_A, pad=0)
-     coords = np.column_stack((x_target.ravel(), y_target.ravel())).flatten().astype(np.float32)
+     coords = np.column_stack((y_target.ravel(), x_target.ravel()))
 
      rows = int(image_B.shape[0])
      cols = int(image_B.shape[1])
-     num_coords = coords.shape[0] // 2
+     num_coords = coords.shape[0]
 
      pyimcom_croutines.bilinear_transpose(image_A,
                                             rows, cols,
@@ -376,13 +376,13 @@ def transpose_interpolate( image_A, wcs_A, image_B, original_image):
                                             num_coords,
                                             original_image)
 
-def transpose_par(array):
+def transpose_par(I):
     """
-    transpose interpolates a params image (sums across rows)
+    transpose interpolates an image (sums across rows)
     :param array: input array
     :return:  1D vec of N_params
     """
-    return np.sum(array, axis=1)
+    return np.sum(I, axis=1)
 
 
 def get_effective_gain(sca):
@@ -543,9 +543,9 @@ def main():
 
             # Calculate and then transpose the gradient of I_A-J_A
             gradient_interpolated = f_prime(psi[k, :, :])
-            if obsid_A == '670' and scaid_A == '10':
-                hdu = fits.PrimaryHDU(gradient_interpolated)
-                hdu.writeto(test_image_dir+'Fp_Psi_670_10.fits', overwrite=True)
+            # if obsid_A == '670' and scaid_A == '10':
+            #     hdu = fits.PrimaryHDU(gradient_interpolated)
+            #     hdu.writeto(test_image_dir+'Fp_Psi_670_10.fits', overwrite=True)
 
             term_1 = transpose_par(gradient_interpolated)
 
@@ -717,7 +717,6 @@ def main():
         global test_image_dir
         test_image_dir = 'test_images/'+str(0)+'/'
         psi = cost_function(p, f)[1]
-        final_iter = 0.
         print('Minutes in initial cost function: ', (time.time() - t_start_cost)/60, '\n')
         sys.stdout.flush()
 
@@ -746,7 +745,7 @@ def main():
             else:
                 beta = np.sum(np.square(grad)) / np.sum(np.square(grad_prev))  # Calculate beta (direction scaling)
                 print('Current Beta: ', beta)
-                direction_prev = direction  # set previous direction
+                # direction_prev = direction  # set previous direction
                 direction = -grad + beta * direction_prev
 
             if current_norm < tol:
