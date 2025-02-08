@@ -603,9 +603,9 @@ def main():
         working_p = copy.deepcopy(p)
 
         if not np.any(p.params):
-            alpha_max = 2**8
+            alpha_max = 2**4
         else:
-            alpha_max = 2**8 / np.max(p.params)
+            alpha_max = 2**4 / np.max(p.params)
 
         alpha_min = -alpha_max
 
@@ -659,10 +659,10 @@ def main():
                 best_p = copy.deepcopy(working_p)
                 best_psi=working_psi
 
-            if convergence_crit < tol: # KL this was an arbitrary choice
-                print("Linear search convergence via crit<", tol, " in ", k, " iterations and ",
-                      (time.time() - t0_ls_iter) / 60, "Minutes.")
-                return best_p, best_psi
+            # if convergence_crit < tol: # KL this was an arbitrary choice
+            #     print("Linear search convergence via crit<", tol, " in ", k, " iterations and ",
+            #           (time.time() - t0_ls_iter) / 60, "Minutes.")
+            #     return best_p, best_psi
 
             if d_cost > 0:
                 alpha_max = alpha_test
