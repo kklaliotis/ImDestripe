@@ -740,7 +740,7 @@ def main():
                 norm_0 = np.linalg.norm(grad)
                 print('Initial norm: ', norm_0)
                 tol = tol * norm_0
-                direction = -grad  # First direction is negative grad
+                direction = -grad/(np.linalg.norm(grad) +1e-10) # First direction is negative grad
                 beta = 0  # First beta is zero
             else:
                 beta = np.sum(np.square(grad)) / np.sum(np.square(grad_prev))  # Calculate beta (direction scaling)
