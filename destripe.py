@@ -13,6 +13,7 @@ import numpy as np
 from astropy.io import fits
 from astropy import wcs
 from scipy.signal import convolve2d
+from scipy.optimize import line_search
 from utils import compareutils
 import re
 import sys
@@ -694,6 +695,34 @@ def main():
 
         return best_p, best_psi
 
+    def backtracking_line_search(p, direction, f, f_prime, alpha=1.0, rho=0.5, c=1e-4):
+        """
+        Perform a backtracking line search using the Armijo condition.
+
+        :param p: Current parameter object.
+        :param direction: Descent direction.
+        :param f: Function used for cost evaluation.
+        :param f_prime: Derivative of f.
+        :param alpha: Initial step size.
+        :param rho: Factor by which alpha is reduced (default 0.5).
+        :param c: Armijo condition constant (default 1e-4).
+        :return: New parameter object and psi after line search.
+        """
+        cost_old, psi = cost_function(p, f)
+        grad = residual_function(psi, f_prime)
+
+        while True:
+            p_new = p + alpha * direction  # Update parameter
+            cost_new, psi_new = cost_function(p_new, f)
+
+            if cost_new <= cost_old + c * alpha * np.dot(grad.flatten(), direction.flatten()):
+                return p_new, psi_new  # Armijo condition satisfied
+
+            alpha *= rho  # Reduce step size
+
+            if alpha < 1e-8:  # Prevent infinite loop due to tiny step sizes
+                print("Warning: Line search step size is too small. Falling back to tiny step.")
+                return p + 1e-8 * direction, psi  # Small fallback step
 
     # Conjugate Gradient Descent
     def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
@@ -740,10 +769,10 @@ def main():
                 norm_0 = np.linalg.norm(grad)
                 print('Initial norm: ', norm_0)
                 tol = tol * norm_0
-                direction = -grad/(np.linalg.norm(grad) +1e-10) # First direction is negative grad
+                direction = -grad/(np.linalg.norm(grad) +1e-10)  # First direction is negative grad
                 beta = 0  # First beta is zero
             else:
-                beta = np.sum(np.square(grad)) / np.sum(np.square(grad_prev))  # Calculate beta (direction scaling)
+                beta = max(0, np.dot(grad, grad - grad_prev) / np.dot(grad_prev, grad_prev))  # Change beta to Polak-Ribière
                 print('Current Beta: ', beta)
                 # direction_prev = direction  # set previous direction
                 direction = -grad + beta * direction_prev
@@ -755,7 +784,7 @@ def main():
             # Perform linear search
             t_start_LS = time.time()
             print('\nInitiating linear search in direction: ', direction)
-            p_new, psi_new = linear_search(p, direction, f, f_prime)
+            p_new, psi_new =backtracking_line_search(p, direction, f, f_prime)
             print('Minutes spent in linear search: ', (time.time() - t_start_LS) / 60)
             print('Current norm: ', current_norm, 'Tol * Norm_0: ', tol, 'Difference (CN-TOL): ', current_norm - tol)
             print('Current best params: ', p_new.params)
