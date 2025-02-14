@@ -621,9 +621,9 @@ def main():
         working_p = copy.deepcopy(p)
 
         if not np.any(p.params):
-            alpha_max = 2**4
+            alpha_max = 2
         else:
-            alpha_max = 2**4 / np.max(p.params)
+            alpha_max = 2 / np.max(p.params)
 
         alpha_min = -alpha_max
 
