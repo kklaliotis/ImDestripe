@@ -157,6 +157,9 @@ class sca_img:
         Construct a version of this SCA interpolated from other, overlapping ones.
         :return:
         """
+        if self.obsid=='670' and self.scaid=='10':
+            print(f"Check the index: {all_scas[ind]} =? {self.scaid}_{self.obsid}")
+
         this_interp = np.zeros(self.shape)
 
         if not os.path.isfile(tempfile + self.obsid+'_'+self.scaid+'_Neff.dat'):
@@ -169,7 +172,7 @@ class sca_img:
             make_Neff=False
 
         t_a_start = time.time()
-        print('Starting interpolation for SCA' + self.obsid + '_' + self.scaid)
+        print('Starting interpolation for SCA' + self.obsid + '_' + self.scaid + ' (index '+ str(ind)+')')
         sys.stdout.flush()
 
         N_BinA = 0
@@ -183,6 +186,7 @@ class sca_img:
                 I_B.apply_noise()
 
                 if self.obsid=='670' and self.scaid=='10':
+                    print('Image B index:' + str(k))
                     print('\nI_B: ', obsid_B, scaid_B, 'Pre-Param-Subtraction mean:', np.mean(I_B.image))
 
                 if params:
@@ -289,6 +293,9 @@ def get_scas(filter, prefix):
             all_wcs.append(this_wcs)
             this_file.close()
     write_to_file('N SCA images in this mosaic: ' + str(n_scas))
+    print('\nSCA List:')
+    for i,s in enumerate(all_scas):
+        print(f"SCA {i}: {s}\n")
     return all_scas, all_wcs
 
 def apply_object_mask(image, mask=None):
@@ -325,6 +332,8 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
 
     x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_A.w, image_B.w, pad=0)
     coords = np.column_stack(( y_target.ravel(), x_target.ravel()))
+    if image_A.obsid=='670' and image_A.scaid=='10':
+        print(f"670_10 first 3 coord pairs: {coords[0:3]}")
 
     # Verify data just before C call
     rows = int(image_B.shape[0])
@@ -365,6 +374,8 @@ def transpose_interpolate( image_A, wcs_A, image_B, original_image):
      """
      x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_B.w, wcs_A, pad=0)
      coords = np.column_stack((y_target.ravel(), x_target.ravel()))
+     if image_B.obsid == '670' and image_B.scaid == '10':
+         print(f"670_10 first 3 coord pairs: {coords[0:3]}")
 
      rows = int(image_B.shape[0])
      cols = int(image_B.shape[1])
@@ -493,6 +504,7 @@ def main():
             I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
 
             if obsid_A=='670' and scaid_A=='10':
+                print(f'670_10 is image A with index {j}')
                 hdu = fits.PrimaryHDU(I_A.image)
                 hdu.writeto(test_image_dir+'670_10_I_A_sub_masked.fits', overwrite=True)
 
@@ -506,6 +518,10 @@ def main():
                 hdu.writeto(test_image_dir+'670_10_J_A_masked.fits', overwrite=True)
 
             psi[j, :, :] = np.where(J_A_image != 0, I_A.image - J_A_image, 0)
+
+            if obsid_A=='670' and scaid_A=='10':
+                hdu = fits.PrimaryHDU(psi[j,:,:])
+                hdu.writeto(test_image_dir+'670_10_Psi.fits', overwrite=True)
 
             # Compute local epsilon
             local_epsilon = np.sum(f(psi[j, :, :]))
@@ -543,9 +559,10 @@ def main():
 
             # Calculate and then transpose the gradient of I_A-J_A
             gradient_interpolated = f_prime(psi[k, :, :])
-            # if obsid_A == '670' and scaid_A == '10':
-            #     hdu = fits.PrimaryHDU(gradient_interpolated)
-            #     hdu.writeto(test_image_dir+'Fp_Psi_670_10.fits', overwrite=True)
+            if obsid_A == '670' and scaid_A == '10':
+                # hdu = fits.PrimaryHDU(gradient_interpolated)
+                # hdu.writeto(test_image_dir+'Fp_Psi_670_10.fits', overwrite=True)
+                print(f"check index of 670_10 (in resids): k={k} and all_scas[k]={all_scas[k]}")
 
             term_1 = transpose_par(gradient_interpolated)
 
@@ -581,6 +598,7 @@ def main():
                     if obsid_A == '670' and scaid_A == '10':
                         print('Terms 1 and 2 means: ', np.mean(term_1), np.mean(term_2))
                         print('G_eff_a, G_eff_b means: ', np.mean(g_eff_A), np.mean(I_B.g_eff))
+                        print(f"B image: {obsid_B}_{scaid_B} match index {j} in all_scas: {all_scas[j]}")
 
                     resids[j,:] += term_2
 
@@ -615,6 +633,8 @@ def main():
             if k==1:
                 print('\n!!!! Inside linear search function now.')
                 print("Direction:", direction)
+                hdu = fits.PrimaryHDU(direction)
+                hdu.writeto(test_image_dir+'LSdirection.fits', overwrite=True)
                 print("Initial params:", p.params)
                 print("Initial epsilon:", best_epsilon)
 
