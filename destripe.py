@@ -144,7 +144,7 @@ class sca_img:
         wcs = self.w
         h = self.shape[0] + pad
         w = self.shape[1] + pad
-        x_i, y_i = np.meshgrid(np.arange(h), np.arange(w))
+        y_i, x_i = np.meshgrid(np.arange(h), np.arange(w))
         x_i -= pad / 2.
         y_i -= pad / 2.
         x_flat = x_i.flatten()
