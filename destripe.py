@@ -621,9 +621,9 @@ def main():
         working_p = copy.deepcopy(p)
 
         if not np.any(p.params):
-            alpha_max = 2
+            alpha_max = 4
         else:
-            alpha_max = 2 / np.max(p.params)
+            alpha_max = 4 / np.max(p.params)
 
         alpha_min = -alpha_max
 
@@ -760,7 +760,8 @@ def main():
                 norm_0 = np.linalg.norm(grad)
                 print('Initial norm: ', norm_0)
                 tol = tol * norm_0
-                direction = -grad/(np.linalg.norm(grad) +1e-10) # First direction is negative grad
+                direction = -grad
+                #direction = -grad/(np.linalg.norm(grad) +1e-10) # First direction is negative grad
                 beta = 0  # First beta is zero
             else:
                 beta = np.sum(np.square(grad)) / np.sum(np.square(grad_prev))  # Calculate beta (direction scaling)
