@@ -19,6 +19,8 @@ import sys
 import copy
 import pyimcom_croutines
 
+tempfile_Katherine_dir = True
+
 # KL: Placeholders, some of these should be input arguments or in a config or something
 #input_dir = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/simple/'
 input_dir = '/fs/scratch/PCON0003/klaliotis/destripe/inputs/'
@@ -27,8 +29,11 @@ labnoise_prefix = '/fs/scratch/PCON0003/cond0007/anl-run-in-prod/labnoise/slope_
 filter = 'H158'
 model_params = {'constant': 1, 'linear': 2}
 permanent_mask = '/users/PCON0003/cond0007/imcom/coadd-test-fall2022/permanent_mask_220730.fits'
-outfile = '/fs/scratch/PCON0003/klaliotis/destripe/test_out/destripe_' + filter + '_out.txt'
-tempfile = '/fs/scratch/PCON0003/klaliotis/destripe/test_out/'  # temporary temp file so that i can check these things
+if tempfile_Katherine_dir:
+    tempfile = '/fs/scratch/PCON0003/klaliotis/destripe/test_out/'  # temporary temp file so that i can check these things
+else:
+    tempfile = '/fs/scratch/PCON0003/cond0007/test_out/'
+outfile = tempfile + 'destripe_' + filter + '_out.txt'
 # tempfile = '/tmp/klaliotis-tmp/'
 s_in = 0.11  # arcsec^2
 t_exp = 154  # sec
@@ -50,6 +55,28 @@ def write_to_file(text):
         print(f.readlines())
 
 
+# C.H. wanted to define this before any use of sca_img so moved it up.
+def apply_object_mask(image, mask=None):
+    """
+    Apply a bright object mask to an image.
+    :param image: 2D numpy array, the image to be masked.
+    :param mask: optional: 2D numpy array, the pre-existing object mask you wish to use
+    :return: the image with bright objects (flux>1.5*median; could modify later) masked out
+    """
+    if mask is not None and isinstance(mask, np.ndarray):
+        neighbor_mask = mask
+    else:
+        # Create a binary mask for high-value pixels (KL: could modify later)
+        high_value_mask = image >= 1.5 * np.median(image)
+
+        # Convolve the binary mask with a 5x5 kernel to include neighbors
+        kernel = np.ones((5, 5), dtype=int)
+        neighbor_mask = convolve2d(high_value_mask, kernel, mode='same') > 0
+
+    # Set the target pixels and their neighbors to zero
+    image = np.where(neighbor_mask, 0, image)
+    return image, neighbor_mask
+
 class sca_img:
     """
     Class defining an SCA image object.
@@ -67,14 +94,17 @@ class sca_img:
     Functions:
     apply_noise: apply the appropriate lab noise frame to the SCA image
     apply_permanent_mask: apply the SCA permanent pixel mask to the image
+    apply_all_mask: apply the full SCA mask to the image
     """
 
-    def __init__(self, obsid, scaid, interpolated=False):
+    def __init__(self, obsid, scaid, interpolated=False, add_noise=True, add_objmask=True):
         """
 
         :param obsid:
         :param scaid:
         :param interpolated:
+        :param add_noise:
+        :param add_objmask:
         """
         if interpolated:
             file = fits.open(tempfile +'interpolations/' + obsid + '_' + scaid + '_interp.fits')
@@ -89,7 +119,7 @@ class sca_img:
 
         self.obsid = obsid
         self.scaid = scaid
-        self.mask = np.ones(self.shape)
+        self.mask = np.ones(self.shape, dtype=bool)
         self.params_subtracted = False
 
         # Calculate effecive gain
@@ -102,10 +132,17 @@ class sca_img:
                               (dec[1:-1,2:] - dec[1:-1,:-2])/2, (dec[2:, 1:-1] - dec[:-2, 1:-1])/2))
             derivs_px = np.reshape(np.transpose(derivs), (4088**2, 2, 2))
             det_mat = np.reshape(np.linalg.det(derivs_px), (4088,4088))
-            g_eff[:,:] = 1 / (det_mat * np.cos(np.deg2rad(dec[1:4089,1:4089])) * t_exp * A_eff )
+            g_eff[:,:] = 1 / (np.abs(det_mat) * np.cos(np.deg2rad(dec[1:4089,1:4089])) * t_exp * A_eff )
             del g_eff
 
         self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='r', shape=self.shape)
+
+        # Add a noise frame, if requested
+        if add_noise: self.apply_noise()
+        if add_objmask:
+            _, object_mask = apply_object_mask(self.image)
+            self.apply_permanent_mask()
+            self.mask *= np.logical_not(object_mask) # self.mask = True for good pixels, so set object_mask'ed pixels to False
 
     def apply_noise(self):
         """
@@ -121,9 +158,16 @@ class sca_img:
         Apply permanent pixel mask. updates self.image and self.mask
         :return:
         """
-        pm = np.copy(fits.open(permanent_mask)[0].data[int(self.scaid) - 1])
+        pm = fits.open(permanent_mask)[0].data[int(self.scaid) - 1].astype(bool)
         self.image *= pm
         self.mask *= pm
+
+    def apply_all_mask(self):
+        """
+        Apply permanent pixel mask. updates self.image and self.mask
+        :return:
+        """
+        self.image *= self.mask
 
     def subtract_parameters(self, p, j):
         if self.params_subtracted == True:
@@ -144,7 +188,7 @@ class sca_img:
         wcs = self.w
         h = self.shape[0] + pad
         w = self.shape[1] + pad
-        y_i, x_i = np.meshgrid(np.arange(h), np.arange(w))
+        x_i, y_i = np.meshgrid(np.arange(h), np.arange(w), indexing='xy')
         x_i -= pad / 2.
         y_i -= pad / 2.
         x_flat = x_i.flatten()
@@ -183,7 +227,7 @@ class sca_img:
             if obsid_B != self.obsid and ov_mat[ind, k] != 0:  # Check if this sca_b overlaps sca_a
                 N_BinA += 1
                 I_B = sca_img(obsid_B, scaid_B) # Initialize image B
-                I_B.apply_noise()
+                # I_B.apply_noise() <-- redundant
 
                 if self.obsid=='670' and self.scaid=='10':
                     print('Image B index:' + str(k))
@@ -192,7 +236,7 @@ class sca_img:
                 if params:
                     I_B.subtract_parameters(params, k)
 
-                I_B.apply_permanent_mask() # now I_B.mask is the permanent mask
+                I_B.apply_all_mask() # now I_B is masked
                 B_interp = np.zeros_like(self.image)
                 interpolate_image_bilinear(I_B, self, B_interp)
 
@@ -203,6 +247,9 @@ class sca_img:
                 if obsid_B=='670' and scaid_B=='10' and make_Neff: #only do this once
                     hdu=fits.PrimaryHDU(B_interp)
                     hdu.writeto(test_image_dir+'670_10_B'+self.obsid+'_'+self.scaid+'_interp.fits', overwrite=True)
+                if self.obsid=='670' and self.scaid=='10' and make_Neff:
+                    hdu=fits.PrimaryHDU(B_interp)
+                    hdu.writeto(test_image_dir+'670_10_A'+obsid_B+'_'+scaid_B+'_interp.fits', overwrite=True)
 
                 this_interp += B_interp
 
@@ -213,7 +260,7 @@ class sca_img:
         print('Interpolation done. Number of contributing SCAs: ', N_BinA)
         new_mask = N_eff > 10**-12
         this_interp = np.where(new_mask, this_interp/np.where(new_mask, N_eff, 10**-12), 0) # only do the division where N_eff nonzero
-        header =self.w.to_header()
+        header =self.w.to_header(relax=True)
         this_interp = np.divide(this_interp, self.g_eff)
         hdu = fits.PrimaryHDU(this_interp, header=header)
         hdu.writeto(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits', overwrite=True)
@@ -298,27 +345,6 @@ def get_scas(filter, prefix):
         print(f"SCA {i}: {s}\n")
     return all_scas, all_wcs
 
-def apply_object_mask(image, mask=None):
-    """
-    Apply a bright object mask to an image.
-    :param image: 2D numpy array, the image to be masked.
-    :param mask: optional: 2D numpy array, the pre-existing object mask you wish to use
-    :return: the image with bright objects (flux>1.5*median; could modify later) masked out
-    """
-    if mask is not None and isinstance(mask, np.ndarray):
-        neighbor_mask = mask
-    else:
-        # Create a binary mask for high-value pixels (KL: could modify later)
-        high_value_mask = image >= 1.5 * np.median(image)
-
-        # Convolve the binary mask with a 5x5 kernel to include neighbors
-        kernel = np.ones((5, 5), dtype=int)
-        neighbor_mask = convolve2d(high_value_mask, kernel, mode='same') > 0
-
-    # Set the target pixels and their neighbors to zero
-    image = np.where(neighbor_mask, 0, image)
-    return image, neighbor_mask
-
 def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
     """
     Interpolate values from a "reference" SCA image onto a "target" SCA coordinate grid
@@ -373,7 +399,7 @@ def transpose_interpolate( image_A, wcs_A, image_B, original_image):
      :return:
      """
      x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_B.w, wcs_A, pad=0)
-     coords = np.column_stack((y_target.ravel(), x_target.ravel()))
+     coords = np.column_stack(( y_target.ravel(), x_target.ravel()))
      if image_B.obsid == '670' and image_B.scaid == '10':
          print(f"670_10 first 3 coord pairs: {coords[0:3]}")
 
@@ -495,13 +521,13 @@ def main():
             obsid_A = m.group(1)
             scaid_A = m.group(2)
             I_A = sca_img(obsid_A, scaid_A)  # Inititalize image A
-            I_A.apply_noise()
-            I_A.image,object_mask = apply_object_mask(I_A.image)
 
+            # this is now redundant
+            #I_A.apply_noise()
+            #I_A.image,object_mask = apply_object_mask(I_A.image)
             I_A.subtract_parameters(p, j)
-
-            I_A.image = apply_object_mask(I_A.image, mask=object_mask)[0]  # re-apply mask to make mask pxls 0 again
-            I_A.apply_permanent_mask()  # Apply permanent mask; Now I_A.mask is the permanent mask
+            #I_A.image = apply_object_mask(I_A.image, mask=object_mask)[0]  # re-apply mask to make mask pxls 0 again
+            I_A.apply_all_mask()
 
             if obsid_A=='670' and scaid_A=='10':
                 print(f'670_10 is image A with index {j}')
@@ -511,7 +537,7 @@ def main():
             J_A_image = I_A.make_interpolated(j, params=p)
 
             J_A_image *= I_A.mask # apply permanent mask from A
-            J_A_image = apply_object_mask(J_A_image, mask=object_mask)[0]
+            # J_A_image = apply_object_mask(J_A_image, mask=object_mask)[0] # <-- inputs are already masked
 
             if obsid_A=='670' and scaid_A=='10':
                 hdu = fits.PrimaryHDU(J_A_image)
