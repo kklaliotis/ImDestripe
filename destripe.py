@@ -139,7 +139,7 @@ class sca_img:
         """
         create an array of ra, dec coords for the image
         :param pad: add padding to the array. default is zero. float64
-        :return: coords, an array of (ra, dec) pairs
+        :return: ra, dec flattened arrays of length(height*width)
         """
         wcs = self.w
         h = self.shape[0] + pad
