@@ -133,6 +133,7 @@ class sca_img:
             derivs_px = np.reshape(np.transpose(derivs), (4088**2, 2, 2))
             det_mat = np.reshape(np.linalg.det(derivs_px), (4088,4088))
             g_eff[:,:] = 1 / (np.abs(det_mat) * np.cos(np.deg2rad(dec[1:4089,1:4089])) * t_exp * A_eff )
+            g_eff.flush()
             del g_eff
 
         self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='r', shape=self.shape)
@@ -196,10 +197,12 @@ class sca_img:
         ra, dec = wcs.all_pix2world(x_flat, y_flat, 0)  # 0 is for the first frame (1-indexed)
         return ra, dec
 
-    def make_interpolated(self, ind, params=None):
+    def make_interpolated(self, ind, params=None, N_eff_min=0.5):
         """
         Construct a version of this SCA interpolated from other, overlapping ones.
+        The N_eff_min parameter requires some minimum effective coverage, otherwise masks that pixel.
         :return:
+        interpolated image, mask
         """
         if self.obsid=='670' and self.scaid=='10':
             print(f"Check the index: {all_scas[ind]} =? {self.scaid}_{self.obsid}")
@@ -258,16 +261,17 @@ class sca_img:
 
 
         print('Interpolation done. Number of contributing SCAs: ', N_BinA)
-        new_mask = N_eff > 10**-12
-        this_interp = np.where(new_mask, this_interp/np.where(new_mask, N_eff, 10**-12), 0) # only do the division where N_eff nonzero
+        new_mask = N_eff > N_eff_min
+        this_interp = np.where(new_mask, this_interp/np.where(new_mask, N_eff, N_eff_min), 0) # only do the division where N_eff nonzero
         header =self.w.to_header(relax=True)
         this_interp = np.divide(this_interp, self.g_eff)
         hdu = fits.PrimaryHDU(this_interp, header=header)
         hdu.writeto(tempfile + 'interpolations/' + self.obsid + '_' + self.scaid + '_interp.fits', overwrite=True)
         t_elapsed_a = time.time() - t_a_start
 
+        if make_Neff: N_eff.flush()
         del N_eff
-        return this_interp
+        return this_interp, new_mask
 
 class parameters:
     """
@@ -398,7 +402,7 @@ def transpose_interpolate( image_A, wcs_A, image_B, original_image):
      note: bilinear_transpose(float* image, int rows, int cols, float* coords, int num_coords, float* original_image)
      :return:
      """
-     x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_B.w, wcs_A, pad=0)
+     x_target, y_target, is_in_ref = compareutils.map_sca2sca(wcs_A, image_B.w, pad=0)
      coords = np.column_stack(( y_target.ravel(), x_target.ravel()))
      if image_B.obsid == '670' and image_B.scaid == '10':
          print(f"670_10 first 3 coord pairs: {coords[0:3]}")
@@ -534,16 +538,15 @@ def main():
                 hdu = fits.PrimaryHDU(I_A.image)
                 hdu.writeto(test_image_dir+'670_10_I_A_sub_masked.fits', overwrite=True)
 
-            J_A_image = I_A.make_interpolated(j, params=p)
-
-            J_A_image *= I_A.mask # apply permanent mask from A
+            J_A_image, J_A_mask = I_A.make_interpolated(j, params=p)
+            J_A_mask *= I_A.mask # apply permanent mask from A
             # J_A_image = apply_object_mask(J_A_image, mask=object_mask)[0] # <-- inputs are already masked
 
             if obsid_A=='670' and scaid_A=='10':
-                hdu = fits.PrimaryHDU(J_A_image)
+                hdu = fits.PrimaryHDU(J_A_image*J_A_mask)
                 hdu.writeto(test_image_dir+'670_10_J_A_masked.fits', overwrite=True)
 
-            psi[j, :, :] = np.where(J_A_image != 0, I_A.image - J_A_image, 0)
+            psi[j, :, :] = np.where(J_A_mask, I_A.image - J_A_image, 0)
 
             if obsid_A=='670' and scaid_A=='10':
                 hdu = fits.PrimaryHDU(psi[j,:,:])
@@ -565,7 +568,7 @@ def main():
         return epsilon, psi
 
 
-    def residual_function(psi, f_prime):
+    def residual_function(psi, f_prime, extrareturn=False):
         """
         Calculate the residuals.
         :param psi: the image difference array (I_A - J_A) (N_SCA, 4088, 4088)
@@ -574,6 +577,9 @@ def main():
         :return: resids, a 2D array with one row per SCA and one col per image-row-parameter
         """
         resids = (parameters('constant', 4088).params)
+        if extrareturn:
+            resids1 = np.zeros_like(resids)
+            resids2 = np.zeros_like(resids)
         print('\nResidual calculation started')
         for k, sca_a in enumerate(all_scas):
 
@@ -627,10 +633,13 @@ def main():
                         print(f"B image: {obsid_B}_{scaid_B} match index {j} in all_scas: {all_scas[j]}")
 
                     resids[j,:] += term_2
+                    if extrareturn: resids2[j,:] += term_2
 
             resids[k, :] -= term_1
+            if extrareturn: resids1[k, :] -= term_1
 
         print('Residuals calculation finished\n')
+        if extrareturn: return resids,resids1,resids2
         return resids
 
 
@@ -774,7 +783,12 @@ def main():
             t_start_CG_iter = time.time()
 
             # Compute the gradient
-            grad = residual_function(psi, f_prime)
+            grad, gr_term1, gr_term2 = residual_function(psi, f_prime, extrareturn=True)
+            #if i==0:
+            #    hdu_ = fits.PrimaryHDU(np.stack((grad,gr_term1,gr_term2)))
+            #    hdu_.writeto('grterms.fits', overwrite=True)
+            #    del hdu_
+            del gr_term1, gr_term2
             print('Minutes spent in residual function:', (time.time() - t_start_CG_iter) / 60)
             sys.stdout.flush()
 
