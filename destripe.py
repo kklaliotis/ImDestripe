@@ -151,7 +151,7 @@ class sca_img:
         KL to do: make an option to write out image of image + noise (for comparison fig)
         :return:
         """
-        noiseframe = np.copy(fits.open(labnoise_prefix + self.obsid + '_' + self.scaid + '.fits')['PRIMARY'].data)
+        noiseframe = np.copy(fits.open(labnoise_prefix + self.obsid + '_' + self.scaid + '.fits')['PRIMARY'].data) * 1.458 * 50 # times gain and N_frames
         self.image += noiseframe[4:4092, 4:4092]
 
     def apply_permanent_mask(self):
