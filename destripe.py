@@ -8,7 +8,6 @@ KL To do list:
 import os
 import glob
 import time
-import ctypes
 import numpy as np
 from astropy.io import fits
 from astropy import wcs
@@ -657,7 +656,7 @@ def main():
             alpha_max = 4 / np.max(p.params)
 
         alpha_min = -alpha_max
-        conv_params = np.zeros((3,1))
+        conv_params = []
 
         for k in range(1, n_iter):
             t0_ls_iter = time.time()
@@ -683,8 +682,8 @@ def main():
 
             d_cost = np.sum(working_resids * direction)
             convergence_crit = (alpha_max-alpha_min)
+            conv_params.append([working_epsilon, alpha_test, d_cost])
 
-            conv_params=np.append(conv_params, [[working_epsilon, alpha_test, d_cost]], axis=0)
             if k%10==0:
                 print(f"conv params array shape: {np.shape(conv_params)}\n")
                 hdu = fits.PrimaryHDU(working_resids)
@@ -707,6 +706,8 @@ def main():
                 print("Linear search convergence via crit<", 0.01/current_norm, " in ", k, " iterations")
                 hdu = fits.PrimaryHDU(best_p)
                 hdu.writeto(test_image_dir + 'best_p.fits', overwrite=True)
+                hdu = fits.PrimaryHDU(np.array(conv_params))
+                hdu.writeto(test_image_dir + 'conv_params.fits', overwrite=True)
                 return best_p, best_psi
 
             if d_cost > tol:
@@ -719,6 +720,8 @@ def main():
                 print("Linear search convergence via |d_cost|<", tol," in ", k, " iterations")
                 hdu = fits.PrimaryHDU(best_p)
                 hdu.writeto(test_image_dir + 'best_p.fits', overwrite=True)
+                hdu = fits.PrimaryHDU(np.array(conv_params))
+                hdu.writeto(test_image_dir + 'conv_params.fits', overwrite=True)
                 return best_p, best_psi
 
         return best_p, best_psi
