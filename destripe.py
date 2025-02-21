@@ -643,7 +643,7 @@ def main():
         return resids
 
 
-    def linear_search(p, direction, f, f_prime, n_iter=50, tol=10**-5):
+    def linear_search(p, direction, f, f_prime, n_iter=100, tol=10**-3):
 
         # KL: first version of LS using constant direction depth alpha
         # alpha = 0.1  # Step size
@@ -696,14 +696,14 @@ def main():
             working_resids = residual_function(working_psi, f_prime)
 
             d_cost = np.sum(working_resids * direction)
-            convergence_crit = (alpha_max-alpha_min)/2
+            convergence_crit = (alpha_max-alpha_min)
 
             print('\nEnding LS iteration', k)
             print('Current d_cost = ', d_cost, 'epsilon = ', working_epsilon)
             print("Working resids:", working_resids)
             print("Working params:", working_p.params)
             print('Current alpha range (min, test, max): ', (alpha_min, alpha_test, alpha_max))
-            print('Current convergence criterion (alpha_max-alpha_min)/2: ', convergence_crit)
+            print('Current delta alpha: ', convergence_crit)
             print('Time spent in this LS iteration:', (time.time()-t0_ls_iter)/60, "Minutes."'\n')
 
             hdu = fits.PrimaryHDU(working_resids)
@@ -714,20 +714,18 @@ def main():
                 best_p = copy.deepcopy(working_p)
                 best_psi=working_psi
 
-            # if convergence_crit < tol: # KL this was an arbitrary choice
-            #     print("Linear search convergence via crit<", tol, " in ", k, " iterations and ",
-            #           (time.time() - t0_ls_iter) / 60, "Minutes.")
-            #     return best_p, best_psi
+            if convergence_crit < (0.01/current_norm): 
+                print("Linear search convergence via crit<", 0.01/current_norm, " in ", k, " iterations")
+                return best_p, best_psi
 
-            if d_cost > 0:
+            if d_cost > tol:
                 alpha_max = alpha_test
                 continue  # go to next iteration
-            elif d_cost < 0:
+            elif d_cost < -tol:
                 alpha_min = alpha_test
                 continue
             else:
-                print("Linear search convergence via d_cost=0 in ", k, " iterations and ",
-                      (time.time()-t0_ls_iter)/60, "Minutes.")
+                print("Linear search convergence via |d_cost|<", tol," in ", k, " iterations")
                 return best_p, best_psi
 
 
@@ -793,7 +791,7 @@ def main():
             sys.stdout.flush()
 
             # Compute the norm of the gradient
-            current_norm = np.linalg.norm(grad)
+            global current_norm = np.linalg.norm(grad)
 
             if i == 0:
                 print('Initial gradient: ', grad)
