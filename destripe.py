@@ -645,10 +645,6 @@ def main():
 
     def linear_search(p, direction, f, f_prime, n_iter=100, tol=10**-3):
 
-        # KL: first version of LS using constant direction depth alpha
-        # alpha = 0.1  # Step size
-        # p.params = p.params + alpha * direction
-
         best_epsilon, best_psi = cost_function(p, f)
         best_p = copy.deepcopy(p)
 
@@ -661,6 +657,7 @@ def main():
             alpha_max = 4 / np.max(p.params)
 
         alpha_min = -alpha_max
+        conv_params = np.zeros((3,1))
 
         for k in range(1, n_iter):
             t0_ls_iter = time.time()
@@ -676,17 +673,6 @@ def main():
             if k == n_iter - 1:
                 print('WARNING: Linear search did not converge!! This is going to break because best_p is not assigned.')
 
-            # KL: previous version of LS, using adaptive direction depth alpha
-            # current_step = alpha * k / (1 + k)
-            # clipped_direction = np.clip(direction,
-            #                          -np.abs(working_p.params),
-            #                          np.abs(working_p.params))
-
-            # candidate_params = working_p.params + current_step * direction
-            # candidate_params = np.clip(candidate_params,
-            #                            working_p.params - 10*np.std(working_p.params),
-            #                            working_p.params + 10*np.std(working_p.params))
-
             alpha_test = .5 * (alpha_min + alpha_max)
 
             working_params = p.params + alpha_test * direction
@@ -698,6 +684,12 @@ def main():
             d_cost = np.sum(working_resids * direction)
             convergence_crit = (alpha_max-alpha_min)
 
+            conv_params=np.append(conv_params, [[working_epsilon, alpha_test, d_cost]], axis=0)
+            if k%10==0:
+                print(f"conv params array shape: {np.shape(conv_params)}\n")
+                hdu = fits.PrimaryHDU(working_resids)
+                hdu.writeto(test_image_dir + 'LS_Residuals_' + str(k) + '.fits', overwrite=True)
+
             print('\nEnding LS iteration', k)
             print('Current d_cost = ', d_cost, 'epsilon = ', working_epsilon)
             print("Working resids:", working_resids)
@@ -706,9 +698,6 @@ def main():
             print('Current delta alpha: ', convergence_crit)
             print('Time spent in this LS iteration:', (time.time()-t0_ls_iter)/60, "Minutes."'\n')
 
-            hdu = fits.PrimaryHDU(working_resids)
-            hdu.writeto(test_image_dir+'LS_Residuals_'+str(k)+'.fits', overwrite=True)
-
             if working_epsilon < best_epsilon:
                 best_epsilon = working_epsilon
                 best_p = copy.deepcopy(working_p)
@@ -716,6 +705,8 @@ def main():
 
             if convergence_crit < (0.01/current_norm): 
                 print("Linear search convergence via crit<", 0.01/current_norm, " in ", k, " iterations")
+                hdu = fits.PrimaryHDU(best_p)
+                hdu.writeto(test_image_dir + 'best_p.fits', overwrite=True)
                 return best_p, best_psi
 
             if d_cost > tol:
@@ -726,24 +717,9 @@ def main():
                 continue
             else:
                 print("Linear search convergence via |d_cost|<", tol," in ", k, " iterations")
+                hdu = fits.PrimaryHDU(best_p)
+                hdu.writeto(test_image_dir + 'best_p.fits', overwrite=True)
                 return best_p, best_psi
-
-
-
-                # new_p = copy.deepcopy(working_p)
-            # new_p.params = working_params
-            #
-            # new_epsilon = working_epsilon
-            # new_psi = working_psi
-
-            # if working_epsilon < best_epsilon:
-                # best_p = copy.deepcopy(working_p)
-            #     best_epsilon = working_epsilon
-                # best_psi = working_psi
-            # else:
-            #     break
-            # print(f'Linear search iteration {k}: Δε = {best_epsilon:.4e}, '
-            #       f'Time = {(time.time() - t0_ls_iter) / 60:.4f} Minutes')
 
         return best_p, best_psi
 
@@ -791,7 +767,8 @@ def main():
             sys.stdout.flush()
 
             # Compute the norm of the gradient
-            global current_norm = np.linalg.norm(grad)
+            global current_norm
+            current_norm = np.linalg.norm(grad)
 
             if i == 0:
                 print('Initial gradient: ', grad)
