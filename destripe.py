@@ -32,6 +32,7 @@ if tempfile_Katherine_dir:
     tempfile = '/fs/scratch/PCON0003/klaliotis/destripe/test_out/'  # temporary temp file so that i can check these things
 else:
     tempfile = '/fs/scratch/PCON0003/cond0007/test_out/'
+global outfile
 outfile = tempfile + 'destripe_' + filter + '_out.txt'
 # tempfile = '/tmp/klaliotis-tmp/'
 s_in = 0.11  # arcsec^2
@@ -41,16 +42,18 @@ t0 = time.time()
 test = True
 
 
-def write_to_file(text):
+def write_to_file(text, filename=None):
     """
     Function to write some text to an output file
-    :param text: a string to print
+    :param text: Str, what to print
+    :param filename: Str, an alternative filename if not going into the outfile
     :return: nothing
     """
-    global outfile
-    with open(outfile, "w") as f:
+    if filename is None:
+        filename = outfile
+    with open(filename, "w") as f:
         f.write(text + '\n')
-    with open(outfile, "r") as f:
+    with open(filename, "r") as f:
         print(f.readlines())
 
 
@@ -60,7 +63,7 @@ def apply_object_mask(image, mask=None):
     Apply a bright object mask to an image.
     :param image: 2D numpy array, the image to be masked.
     :param mask: optional: 2D numpy array, the pre-existing object mask you wish to use
-    :return: the image with bright objects (flux>1.5*median; could modify later) masked out
+    :return: the image with bright objects (flux>2*median; could modify later) masked out
     """
     if mask is not None and isinstance(mask, np.ndarray):
         neighbor_mask = mask
@@ -80,31 +83,29 @@ class sca_img:
     """
     Class defining an SCA image object.
     Arguments:
-        scaid: the SCA id (str)
-        obsid: the observation id (str)
-        interpolated: True if you want the interpolated version of this SCA and not the original. Default:False
+        scaid: Str, the SCA id
+        obsid: Str, the observation id
+        interpolated: Bool; True if you want the interpolated version of this SCA and not the original. Default:False
+        add_noise: Bool; True if you want to add read noise to the SCA image
+        add_objmask: Bool; True if you want to apply the permanent pixel mask and a bright object mask
     Attributes:
-        image: the SCA image (4088x4088)
-        shape: shape of the image
-        w: the astropy.wcs object associated with this SCA
-        mask: the full pixel mask that is used on this image. Is correct only after calling apply_permanent_mask
-        g_eff : effective gain in each pixel of the image
-        params_subtracted : Check whether parameters have been subtracted from this image.
-    Functions:
-    apply_noise: apply the appropriate lab noise frame to the SCA image
-    apply_permanent_mask: apply the SCA permanent pixel mask to the image
-    apply_all_mask: apply the full SCA mask to the image
+        image: 2D np array, the SCA image (4088x4088)
+        shape: Tuple, the shape of the image
+        w: WCS object, the astropy.wcs object associated with this SCA
+        obsid: Str, observation ID of this SCA image
+        scaid: Str, SCA ID (position on focal plane) of this SCA image
+        mask: 2D np array, the full pixel mask that is used on this image. Is correct only after calling apply_permanent_mask
+        g_eff : 2D np array, effective gain in each pixel of the image
+        params_subtracted: Bool, True if parameters have been subtracted from this image.
+    Methods:
+        apply_noise: apply the appropriate lab noise frame to the SCA image
+        apply_permanent_mask: apply the SCA permanent pixel mask to the image
+        apply_all_mask: apply the full SCA mask to the image
+        subtract_parameters: Subtract a given set of parameters from self.image; updates self.image, self.params_subtracted
     """
 
     def __init__(self, obsid, scaid, interpolated=False, add_noise=True, add_objmask=True):
-        """
 
-        :param obsid:
-        :param scaid:
-        :param interpolated:
-        :param add_noise:
-        :param add_objmask:
-        """
         if interpolated:
             file = fits.open(tempfile +'interpolations/' + obsid + '_' + scaid + '_interp.fits')
             image_hdu = 'PRIMARY'
@@ -144,18 +145,21 @@ class sca_img:
             self.apply_permanent_mask()
             self.mask *= np.logical_not(object_mask) # self.mask = True for good pixels, so set object_mask'ed pixels to False
 
-    def apply_noise(self):
+    def apply_noise(self, save_fig=None):
         """
         Add detector noise to self.image
-        KL to do: make an option to write out image of image + noise (for comparison fig)
-        :return:
+        :param save_fig: Default None. If passed as "obsid_scaid", write out a fits file of SCA image+noise
+        :return None
         """
         noiseframe = np.copy(fits.open(labnoise_prefix + self.obsid + '_' + self.scaid + '.fits')['PRIMARY'].data) * 1.458 * 50 # times gain and N_frames
         self.image += noiseframe[4:4092, 4:4092]
+        if save_fig:
+            hdu = fits.PrimaryHDU(self.image)
+            hdu.writeto(tempfile+'save_fig.fits', overwrite=True)
 
     def apply_permanent_mask(self):
         """
-        Apply permanent pixel mask. updates self.image and self.mask
+        Apply permanent pixel mask. Updates self.image and self.mask
         :return:
         """
         pm = fits.open(permanent_mask)[0].data[int(self.scaid) - 1].astype(bool)
@@ -164,14 +168,20 @@ class sca_img:
 
     def apply_all_mask(self):
         """
-        Apply permanent pixel mask. updates self.image and self.mask
+        Apply permanent pixel mask. Updates self.image and self.mask
         :return:
         """
         self.image *= self.mask
 
     def subtract_parameters(self, p, j):
+        """
+        Subtract a set of parameters from the SCA image. Updates self.image and self.params_subtracted
+        :param p: a parameters object, with current params
+        :param j: int, the index of the SCA image into all_scas list
+        :return: None
+        """
         if self.params_subtracted == True:
-            print('\n WARNING: PARAMS HAVE ALREADY BEEN SUBTRACTED. ABORTING NOW')
+            write_to_file('\n WARNING: PARAMS HAVE ALREADY BEEN SUBTRACTED. ABORTING NOW')
             sys.exit()
 
         params_image = p.forward_par(j)  # Make destriping params into an image
@@ -181,9 +191,9 @@ class sca_img:
 
     def get_coordinates(self, pad=0.):
         """
-        create an array of ra, dec coords for the image
-        :param pad: add padding to the array. default is zero. float64
-        :return: ra, dec flattened arrays of length(height*width)
+        Create an array of ra, dec coords for the image
+        :param pad: Float64, add padding to the array. default is zero.
+        :return: ra, dec; 1D np arrays of length (height*width)
         """
         wcs = self.w
         h = self.shape[0] + pad
@@ -199,13 +209,13 @@ class sca_img:
     def make_interpolated(self, ind, params=None, N_eff_min=0.5):
         """
         Construct a version of this SCA interpolated from other, overlapping ones.
+        Writes the interpolated image out to the disk, to be read/used later
         The N_eff_min parameter requires some minimum effective coverage, otherwise masks that pixel.
-        :return:
-        interpolated image, mask
+        :param ind: int; index of this SCA in all_scas list
+        :param params: parameters object; parameters to be subtracted from contributing SCAs; default Nnoe
+        :param N_eff_min: float; effective coverage needed for a pixel to contribute to the interpolation
+        :return: None
         """
-        if self.obsid=='670' and self.scaid=='10':
-            print(f"Check the index: {all_scas[ind]} =? {self.scaid}_{self.obsid}")
-
         this_interp = np.zeros(self.shape)
 
         if not os.path.isfile(tempfile + self.obsid+'_'+self.scaid+'_Neff.dat'):
@@ -218,7 +228,7 @@ class sca_img:
             make_Neff=False
 
         t_a_start = time.time()
-        print('Starting interpolation for SCA' + self.obsid + '_' + self.scaid + ' (index '+ str(ind)+')')
+        write_to_file('Starting interpolation for SCA' + self.obsid + '_' + self.scaid + ' (index '+ str(ind)+')')
         sys.stdout.flush()
 
         N_BinA = 0
@@ -258,8 +268,7 @@ class sca_img:
                 if make_Neff:
                     N_eff += B_mask_interp
 
-
-        print('Interpolation done. Number of contributing SCAs: ', N_BinA)
+        write_to_file('Interpolation done. Number of contributing SCAs: ', N_BinA)
         new_mask = N_eff > N_eff_min
         this_interp = np.where(new_mask, this_interp/np.where(new_mask, N_eff, N_eff_min), 0) # only do the division where N_eff nonzero
         header =self.w.to_header(relax=True)
@@ -275,16 +284,18 @@ class sca_img:
 class parameters:
     """
     Class holding the parameters for a given mosaic. This can be the destriping parameters, or a slew of other
-    parameters that need to be the same shape and have the same abilities...
+    parameters that need to be the same shape and have the same methods...
     Attributes:
-        model: which destriping model to use, which specifies the number of parameters per row based on the
-         model_params dict
-        n_rows: number of rows in the image
-        params_per_row: number of parameters per row, given by the model
-        params: the actual array of parameters.
-    Functions:
-        params_2_images: reshape params into the 2D array
-        flatten_params: reshape params into 1D vector
+        model: Str, which destriping model to use, which specifies the number of parameters per row.
+                Must be a key of the model_params dict
+        n_rows: Int, number of rows in the image
+        params_per_row: Int, number of parameters per row, set by model_params[model]
+        params: 2D np array, the actual array of parameters.
+        current_shape: Str, the current shape (1D or 2D) of SCA params
+    Methods:
+        params_2_images: reshape params into a 2D array; one row per SCA
+        # flatten_params: reshape params into 1D vector
+        forward_par: reshape one row of params array (one SCA) into a 2D array by projection along rows
     To do:
         add option for additional parameters
     """
@@ -299,24 +310,24 @@ class parameters:
     def params_2_images(self):
         """
         Reshape flattened parameters into 2D array with 1 row per sca and n_rows (in image) * params_per_row entries
-        :return:
+        :return: None
         """
         self.params = np.reshape(self.params, (len(all_scas), self.n_rows * self.params_per_row))
         self.current_shape = '2D'
 
-    def flatten_params(self):
-        """
-        Reshape 2D params array into flat
-        :return:
-        """
-        self.params = np.ravel(self.params)
-        self.current_shape = '1D'
+    # def flatten_params(self):
+    #     """
+    #     Reshape 2D params array into flat
+    #     :return: None
+    #     """
+    #     self.params = np.ravel(self.params)
+    #     self.current_shape = '1D'
 
     def forward_par(self, sca_i):
         """
         Takes one SCA row (n_rows) from the params and casts it into 2D (n_rows x n_rows)
-        :param sca_i: index of which SCA
-        :return:
+        :param sca_i: int, index of which SCA to recast into 2D
+        :return: 2D np array, the image of SCA_i's parameters
         """
         if not self.current_shape == '2D':
             self.params_2_images()
@@ -325,9 +336,11 @@ class parameters:
 
 def get_scas(filter, prefix):
     """
-    Function to get an array of SCA images for this mosaic
-    :param : None
-    :return: numpy array with all the SCA images
+    Function to get a list of all SCA images and their WCSs for this mosaic
+    :param filter: Str, which filter to use for this run. Options: Y106, J129, H158, F184, K213
+    :param prefix: Str, prefix / name of the SCA images
+    :return all_scas: list(strings), list of all the SCAs in this mosiac
+    :return all_wcs: list(wcs objects), the WCS object for each SCA in all_scas (same order)
     """
     n_scas = 0
     all_scas = []
@@ -343,9 +356,9 @@ def get_scas(filter, prefix):
             all_wcs.append(this_wcs)
             this_file.close()
     write_to_file('N SCA images in this mosaic: ' + str(n_scas))
-    print('\nSCA List:')
+    write_to_file('\nSCA List:', 'SCA_list.txt')
     for i,s in enumerate(all_scas):
-        print(f"SCA {i}: {s}\n")
+        write_to_file(f"SCA {i}: {s}\n", "SCA_list.txt")
     return all_scas, all_wcs
 
 def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
@@ -353,16 +366,15 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
     Interpolate values from a "reference" SCA image onto a "target" SCA coordinate grid
     Uses pyimcom_croutines.bilinear_interpolation(float* image, float* g_eff, int rows, int cols, float* coords,
                                                     int num_coords, float* interpolated_image)
-    :param image_B : an SCA object of the image to be interpolated
-    :param image_A : an SCA object of the image whose grid you are interpolating B onto
-    :param interpolated_image : an ndarray of zeros with shape of Image A.
+    :param image_B : SCA object, the image to be interpolated
+    :param image_A : SCA object, the image whose grid you are interpolating B onto
+    :param interpolated_image : 2D np array, all zeros with shape of Image A.
+    :return: None
     interpolated_image_B is updated in-place.
     """
 
     x_target, y_target, is_in_ref = compareutils.map_sca2sca(image_A.w, image_B.w, pad=0)
     coords = np.column_stack(( y_target.ravel(), x_target.ravel()))
-    if image_A.obsid=='670' and image_A.scaid=='10':
-        print(f"670_10 first 3 coord pairs: {coords[0:3]}")
 
     # Verify data just before C call
     rows = int(image_B.shape[0])
@@ -393,18 +405,17 @@ def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
 
 def transpose_interpolate( image_A, wcs_A, image_B, original_image):
      """
-     Interpolate backwards from image_A to image B space.
-     :param image_A : a 2D numpy array (will be the interpolated gradient image)
-     :param wcs_A : the WCS (a wcs.WCS object) that goes with image A
-     :param image_B : An SCA object, the image we're interpolating back onto
-     :param original_image: 2D numpy array, the gradient image re-interpolated into image B space
+     Interpolate backwards from image_A to image_B space.
+     :param image_A : 2D np array, the already-interpolated gradient image
+     :param wcs_A : a wcs.WCS object, image A's WCS object
+     :param image_B : SCA object, the image we're interpolating the gradient back onto
+     :param original_image: 2D np array, the gradient image re-interpolated into image B space
      note: bilinear_transpose(float* image, int rows, int cols, float* coords, int num_coords, float* original_image)
-     :return:
+     :return: None
+     original_image is updated in-place
      """
      x_target, y_target, is_in_ref = compareutils.map_sca2sca(wcs_A, image_B.w, pad=0)
      coords = np.column_stack(( y_target.ravel(), x_target.ravel()))
-     if image_B.obsid == '670' and image_B.scaid == '10':
-         print(f"670_10 first 3 coord pairs: {coords[0:3]}")
 
      rows = int(image_B.shape[0])
      cols = int(image_B.shape[1])
@@ -418,9 +429,9 @@ def transpose_interpolate( image_A, wcs_A, image_B, original_image):
 
 def transpose_par(I):
     """
-    transpose interpolates an image (sums across rows)
-    :param array: input array
-    :return:  1D vec of N_params
+    Sum up the values of an image across rows
+    :param I: 2D np array input array
+    :return: 1D vector, the sum across each row of I
     """
     return np.sum(I, axis=1)
 
@@ -428,9 +439,9 @@ def transpose_par(I):
 def get_effective_gain(sca):
     """
     retrieve the effective gain and n_eff of the image. valid only for already-interpolated images
-    :param sca: whose info you want
-    :return: g_eff: memmap array of the effective gain in each pixel
-    :return: N_eff: memmap array of how many image "B"s contributed to that interpolated image
+    :param sca: Str, like "<prefix>_<obsid>_<scaid>" describing which SCA
+    :return: g_eff: memmap 2D np array of the effective gain in each pixel
+    :return: N_eff: memmap 2D np array of how many image "B"s contributed to that interpolated image
     """
     m = re.search(r'_(\d+)_(\d+)', sca)
     obsid = m.group(1)
@@ -443,8 +454,9 @@ def get_effective_gain(sca):
 def get_ids(sca):
     """
     Take an SCA label and parse it out to get the Obsid and SCA id strings.
-    :param sca: sca name from all_scas
-    :return: obsid (str), scaid (str)
+    :param sca: Str, the sca name from all_scas list
+    :return obsid: Str, the observation ID
+    :return scaid: Str, the SCA ID (position in focal plane)
     """
     m = re.search(r'_(\d+)_(\d+)', sca)
     obsid = m.group(1)
@@ -454,24 +466,24 @@ def get_ids(sca):
 ############################ Main Sequence ############################
 
 all_scas, all_wcs = get_scas(filter, image_prefix)
-print(len(all_scas), " SCAs in this mosaic")
+write_to_file(len(all_scas), " SCAs in this mosaic")
 
 if test:
     if os.path.isfile(tempfile + 'ovmat.npy'):
         ov_mat = np.load(tempfile + 'ovmat.npy')
     else:
         ovmat_t0 = time.time()
-        print('Overlap matrix computing start')
-        ov_mat = compareutils.get_overlap_matrix(all_wcs, verbose=True)  # an N_wcs x N_wcs matrix containing fractional overlap
+        write_to_file('Overlap matrix computing start')
+        ov_mat = compareutils.get_overlap_matrix(all_wcs, verbose=True)
         np.save(tempfile+'ovmat.npy', ov_mat)
-        print("Overlap matrix complete. Duration: ", (time.time()-ovmat_t0)/60, 'Minutes' )
-        print("Overlap matrix saved to: "+tempfile+"ovmat.npy")
+        write_to_file("Overlap matrix complete. Duration: ", (time.time()-ovmat_t0)/60, 'Minutes' )
+        write_to_file("Overlap matrix saved to: "+tempfile+"ovmat.npy")
 else:
     ovmat_t0 = time.time()
-    print('Overlap matrix computing start')
+    write_to_file('Overlap matrix computing start')
     ov_mat = compareutils.get_overlap_matrix(all_wcs,
                                              verbose=True)  # an N_wcs x N_wcs matrix containing fractional overlap
-    print("Overlap matrix complete. Duration: ", (time.time() - ovmat_t0) / 60, 'Minutes')
+    write_to_file("Overlap matrix complete. Duration: ", (time.time() - ovmat_t0) / 60, 'Minutes')
 
 
 # Function options. KL: Could move these to another .py file and call them as modules?
@@ -511,10 +523,13 @@ def main():
 
     def cost_function(p, f):
         """
-        p: parameters object
-        f: keyword for function dictionary options; should also set an f_prime
+        Calculate the cost function with the current de-striping parameters.
+        :param p: parameters object, the current parameters for de-striping
+        :param f: str, keyword for function dictionary options; should also set an f_prime
+        :return epsilon: int, the total cost function summed over all images
+        :return psi: 3D np array, the difference images I_A-J_A
         """
-        print('Initializing cost function')
+        write_to_file('Initializing cost function')
         t0_cost = time.time()
         psi = np.zeros((len(all_scas), 4088, 4088))
         epsilon = 0
@@ -525,21 +540,15 @@ def main():
             scaid_A = m.group(2)
             I_A = sca_img(obsid_A, scaid_A)  # Inititalize image A
 
-            # this is now redundant
-            #I_A.apply_noise()
-            #I_A.image,object_mask = apply_object_mask(I_A.image)
             I_A.subtract_parameters(p, j)
-            #I_A.image = apply_object_mask(I_A.image, mask=object_mask)[0]  # re-apply mask to make mask pxls 0 again
             I_A.apply_all_mask()
 
             if obsid_A=='670' and scaid_A=='10':
-                print(f'670_10 is image A with index {j}')
                 hdu = fits.PrimaryHDU(I_A.image)
                 hdu.writeto(test_image_dir+'670_10_I_A_sub_masked.fits', overwrite=True)
 
             J_A_image, J_A_mask = I_A.make_interpolated(j, params=p)
             J_A_mask *= I_A.mask # apply permanent mask from A
-            # J_A_image = apply_object_mask(J_A_image, mask=object_mask)[0] # <-- inputs are already masked
 
             if obsid_A=='670' and scaid_A=='10':
                 hdu = fits.PrimaryHDU(J_A_image*J_A_mask)
@@ -555,31 +564,34 @@ def main():
             local_epsilon = np.sum(f(psi[j, :, :]))
 
             if obsid_A=='670' and scaid_A=='10':
-                print('Image A mean, std: ', np.mean(I_A.image), np.std(I_A.image))
-                print('Image B mean, std: ', np.mean(J_A_image), np.std(J_A_image))
-                print ('Psi mean, std: ', np.mean(psi[j, :, :]), np.std(psi[j, :, :]) )
-                print('f(Psi) mean, std:', np.mean(f(psi[j, :, :])), np.std(f(psi[j, :, :])))
-                print(f"Local epsilon for SCA {j}: {local_epsilon}")
+                write_to_file('Sample stats for SCA 670_10:')
+                write_to_file(f'Image A mean, std: {np.mean(I_A.image)}, {np.std(I_A.image)}')
+                write_to_file(f'Image B mean, std: {np.mean(J_A_image)}, {np.std(J_A_image)}')
+                write_to_file (f'Psi mean, std: {np.mean(psi[j, :, :])}, {np.std(psi[j, :, :])}')
+                write_to_file(f'f(Psi) mean, std: {np.mean(f(psi[j, :, :]))}, {np.std(f(psi[j, :, :]))}')
+                write_to_file(f"Local epsilon for SCA {j}: {local_epsilon}")
 
             epsilon += local_epsilon
 
-        print('Ending cost function. Minutes elapsed: ', (time.time()-t0_cost)/60)
+        write_to_file('Ending cost function. Minutes elapsed: ', (time.time()-t0_cost)/60)
         return epsilon, psi
 
 
     def residual_function(psi, f_prime, extrareturn=False):
         """
-        Calculate the residuals.
-        :param psi: the image difference array (I_A - J_A) (N_SCA, 4088, 4088)
-        :param f_prime: the function to be used to calculate the gradient.
+        Calculate the residual image, = grad(epsilon)
+        :param psi: 3D np array, the image difference array (I_A - J_A) (N_SCA, 4088, 4088)
+        :param f_prime: function, the derivative of the cost function f
                 in the future this should be set by default based on what you pass for f
-        :return: resids, a 2D array with one row per SCA and one col per image-row-parameter
+        :param extrareturn: Bool (default False); if True, return residual terms 1 and 2 separately
+                in addition to full residuals. returns resids, resids1, resids2
+        :return resids: 2D np array, with one row per SCA and one col per parameter
         """
         resids = (parameters('constant', 4088).params)
         if extrareturn:
             resids1 = np.zeros_like(resids)
             resids2 = np.zeros_like(resids)
-        print('\nResidual calculation started')
+        write_to_file('Residual calculation started')
         for k, sca_a in enumerate(all_scas):
 
             # Go and get the WCS object for image A
@@ -590,10 +602,6 @@ def main():
 
             # Calculate and then transpose the gradient of I_A-J_A
             gradient_interpolated = f_prime(psi[k, :, :])
-            if obsid_A == '670' and scaid_A == '10':
-                # hdu = fits.PrimaryHDU(gradient_interpolated)
-                # hdu.writeto(test_image_dir+'Fp_Psi_670_10.fits', overwrite=True)
-                print(f"check index of 670_10 (in resids): k={k} and all_scas[k]={all_scas[k]}")
 
             term_1 = transpose_par(gradient_interpolated)
 
@@ -627,9 +635,9 @@ def main():
 
                     term_2 = transpose_par(gradient_original)
                     if obsid_A == '670' and scaid_A == '10':
-                        print('Terms 1 and 2 means: ', np.mean(term_1), np.mean(term_2))
-                        print('G_eff_a, G_eff_b means: ', np.mean(g_eff_A), np.mean(I_B.g_eff))
-                        print(f"B image: {obsid_B}_{scaid_B} match index {j} in all_scas: {all_scas[j]}")
+                        write_to_file('670_10 sample stats:')
+                        write_to_file(f'Terms 1 and 2 means: {np.mean(term_1)}, {np.mean(term_2)}')
+                        write_to_file(f'G_eff_a, G_eff_b means: {np.mean(g_eff_A)}, {np.mean(I_B.g_eff)}')
 
                     resids[j,:] += term_2
                     if extrareturn: resids2[j,:] += term_2
@@ -637,12 +645,24 @@ def main():
             resids[k, :] -= term_1
             if extrareturn: resids1[k, :] -= term_1
 
-        print('Residuals calculation finished\n')
+        write_to_file('Residuals calculation finished')
         if extrareturn: return resids,resids1,resids2
         return resids
 
 
     def linear_search(p, direction, f, f_prime, n_iter=100, tol=10**-3):
+        """
+        Linear search via the biseciton method for parameters that minimize the function d_epsilon/d_alpha
+        in the given direction . Note alpha = depth of step in direction
+        :param p: params object, the current de-striping parameters
+        :param direction: 2D np array, direction of conjugate gradient search
+        :param f: function, cost function form
+        :param f_prime: function, derivative of cost function form
+        :param n_iter: int, number of iterations at which to stop searching
+        :param tol: float, absolute value of d_cost at which to converge
+        :return best_p: parameters object, containing the best parameters found via search
+        :return best_psi: 3D numpy array, the difference images made from images with the best_p params subtracted off
+        """
 
         best_epsilon, best_psi = cost_function(p, f)
         best_p = copy.deepcopy(p)
@@ -662,15 +682,15 @@ def main():
             t0_ls_iter = time.time()
 
             if k==1:
-                print('\n!!!! Inside linear search function now.')
-                print("Direction:", direction)
+                write_to_file('Beginning linear search')
+                write_to_file(f"LS Direction: {direction}")
                 hdu = fits.PrimaryHDU(direction)
                 hdu.writeto(test_image_dir+'LSdirection.fits', overwrite=True)
-                print("Initial params:", p.params)
-                print("Initial epsilon:", best_epsilon)
+                write_to_file(f"Initial params: {p.params}")
+                write_to_file(f"Initial epsilon: {best_epsilon}")
 
             if k == n_iter - 1:
-                print('WARNING: Linear search did not converge!! This is going to break because best_p is not assigned.')
+                write_to_file('WARNING: Linear search did not converge!! This is going to break because best_p is not assigned.')
 
             alpha_test = .5 * (alpha_min + alpha_max)
 
@@ -685,17 +705,17 @@ def main():
             conv_params.append([working_epsilon, alpha_test, d_cost])
 
             if k%10==0:
-                print(f"conv params array shape: {np.shape(conv_params)}\n")
+                write_to_file(f"conv params array shape: {np.shape(conv_params)}")
                 hdu = fits.PrimaryHDU(working_resids)
                 hdu.writeto(test_image_dir + 'LS_Residuals_' + str(k) + '.fits', overwrite=True)
 
-            print('\nEnding LS iteration', k)
-            print('Current d_cost = ', d_cost, 'epsilon = ', working_epsilon)
-            print("Working resids:", working_resids)
-            print("Working params:", working_p.params)
-            print('Current alpha range (min, test, max): ', (alpha_min, alpha_test, alpha_max))
-            print('Current delta alpha: ', convergence_crit)
-            print('Time spent in this LS iteration:', (time.time()-t0_ls_iter)/60, "Minutes."'\n')
+            write_to_file(f"Ending LS iteration {k}")
+            write_to_file(f"Current d_cost = {d_cost}, epsilon = {working_epsilon}")
+            write_to_file(f"Working resids: {working_resids}")
+            write_to_file(f"Working params: {working_p.params}")
+            write_to_file(f"Current alpha range (min, test, max): {alpha_min, alpha_test, alpha_max}")
+            write_to_file(f"Current delta alpha: {convergence_crit}")
+            write_to_file(f"Time spent in this LS iteration: {(time.time() - t0_ls_iter) / 60} minutes.")
 
             if working_epsilon < best_epsilon:
                 best_epsilon = working_epsilon
@@ -703,7 +723,7 @@ def main():
                 best_psi=working_psi
 
             if convergence_crit < (0.01/current_norm): 
-                print("Linear search convergence via crit<", 0.01/current_norm, " in ", k, " iterations")
+                write_to_file(f"Linear search convergence via crit<{0.01 / current_norm} in {k} iterations")
                 hdu = fits.PrimaryHDU(best_p)
                 hdu.writeto(test_image_dir + 'best_p.fits', overwrite=True)
                 hdu = fits.PrimaryHDU(np.array(conv_params))
@@ -717,7 +737,7 @@ def main():
                 alpha_min = alpha_test
                 continue
             else:
-                print("Linear search convergence via |d_cost|<", tol," in ", k, " iterations")
+                write_to_file(f"Linear search convergence via |d_cost|< {tol} in {k} iterations")
                 hdu = fits.PrimaryHDU(best_p)
                 hdu.writeto(test_image_dir + 'best_p.fits', overwrite=True)
                 hdu = fits.PrimaryHDU(np.array(conv_params))
@@ -727,33 +747,31 @@ def main():
         return best_p, best_psi
 
 
-    # Conjugate Gradient Descent
-    def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100, alpha=0.1):
+    def conjugate_gradient(p, f, f_prime, tol=1e-5, max_iter=100):
         """
-        :param p: p is a parameters object
-        :param tol:
-        :param max_iter:
-        :param f: function to use for cost function
-        :param f_prime: derivative of f. KL: eventually f should dictate f prime
-        :param alpha: magnitude of direction steps to take in linear search function
-        :return:
+        Algorithm to use conjugate gradient descent to optimize the parameters for destriping.
+        Direction is updated using Fletcher-Reeves method
+        :param p: parameters object, containing initial parameters guess
+        :param f: function, functional form to use for cost function
+        :param f_prime: function, thederivative of f. KL: eventually f should dictate f prime
+        :param tol: float, the value of the norm at which we say CG has converged
+        :param max_iter: int, number of iterations at which to force CG to stop
+        :return p: params object, the best fit parameters for destriping the SCA images
         """
-        print('Starting conjugate gradient optimization\n')
+        write_to_file('Starting conjugate gradient optimization')
 
         # Initialize variables
         grad_prev = None  # No previous gradient initially
         direction = None  # No initial direction
 
-        t_start_cost = time.time()
-        print('Starting initial cost function')
+        write_to_file('Starting initial cost function')
         global test_image_dir
         test_image_dir = 'test_images/'+str(0)+'/'
         psi = cost_function(p, f)[1]
-        print('Minutes in initial cost function: ', (time.time() - t_start_cost)/60, '\n')
         sys.stdout.flush()
 
         for i in range(max_iter):
-            print("\nCG Iteration:", i+1)
+            write_to_file(f"CG Iteration: {i+1}")
             if not os.path.exists('test_images/'+str(i+1)):
                 os.makedirs('test_images/'+str(i+1))
             test_image_dir = 'test_images/' + str(i+1) + '/'
@@ -766,7 +784,7 @@ def main():
             #    hdu_.writeto('grterms.fits', overwrite=True)
             #    del hdu_
             del gr_term1, gr_term2
-            print('Minutes spent in residual function:', (time.time() - t_start_CG_iter) / 60)
+            write_to_file(f"Minutes spent in residual function: {(time.time() - t_start_CG_iter) / 60}")
             sys.stdout.flush()
 
             # Compute the norm of the gradient
@@ -774,30 +792,28 @@ def main():
             current_norm = np.linalg.norm(grad)
 
             if i == 0:
-                print('Initial gradient: ', grad)
+                write_to_file(f'Initial gradient: {grad}')
                 norm_0 = np.linalg.norm(grad)
-                print('Initial norm: ', norm_0)
+                write_to_file(f'Initial norm: {norm_0}')
                 tol = tol * norm_0
                 direction = -grad
-                #direction = -grad/(np.linalg.norm(grad) +1e-10) # First direction is negative grad
-                beta = 0  # First beta is zero
             else:
                 beta = np.sum(np.square(grad)) / np.sum(np.square(grad_prev))  # Calculate beta (direction scaling)
-                print('Current Beta: ', beta)
-                # direction_prev = direction  # set previous direction
+                write_to_file(f"Current Beta: {beta}")
+
                 direction = -grad + beta * direction_prev
 
             if current_norm < tol:
-                print('\nConvergence reached at iteration:', i + 1)
+                write_to_file(f"Convergence reached at iteration: {i + 1} via norm {current_norm} < tol {tol}")
                 break
 
             # Perform linear search
             t_start_LS = time.time()
-            print('\nInitiating linear search in direction: ', direction)
+            write_to_file(f"Initiating linear search in direction: {direction}")
             p_new, psi_new = linear_search(p, direction, f, f_prime)
-            print('Minutes spent in linear search: ', (time.time() - t_start_LS) / 60)
-            print('Current norm: ', current_norm, 'Tol * Norm_0: ', tol, 'Difference (CN-TOL): ', current_norm - tol)
-            print('Current best params: ', p_new.params)
+            write_to_file(f'Total time spent in linear search: {(time.time() - t_start_LS) / 60}')
+            write_to_file(f'Current norm: {current_norm}, Tol * Norm_0: {tol}, Difference (CN-TOL): {current_norm - tol}')
+            write_to_file(f'Current best params: {p_new.params}')
 
             # Update to current values
             p = p_new
@@ -805,15 +821,15 @@ def main():
             grad_prev = grad
             direction_prev = direction
 
-            print('\nMinutes spent in this CG iteration: ', (time.time()-t_start_CG_iter)/60)
+            write_to_file(f'Total time spent in this CG iteration: {(time.time() - t_start_CG_iter) / 60} minutes.')
             sys.stdout.flush()
 
             if i==max_iter-1:
-                print('\nCG reached max iterations and did not converge.')
+                write_to_file(f'CG reached MAX ITERATIONS {max_iter} and DID NOT converge!!!!')
 
-        print('\nConjugate gradient complete. Finished in ', i+1, '/', max_iter, ' iterations with tolerance', tol)
-        print('Final parameters:', p.params)
-        print('Final norm:', current_norm)
+        write_to_file(f'Conjugate gradient complete. Finished in {i + 1} / {max_iter} iterations')
+        write_to_file(f'Final parameters: {p.params}')
+        write_to_file(f'Final norm: {current_norm}')
         return p
 
 
@@ -836,8 +852,9 @@ def main():
         hdu = fits.PrimaryHDU(ds_image, header=header)
         hdu.writeto(tempfile + filter + '/DS_' + obsid + scaid + '.fits', overwrite=True)
 
-    print('Destriped images saved to' + tempfile + filter + '/DS_*.fits \n')
-    print('Total hours elapsed: ', (time.time() - t0)/3600)
+    write_to_file(f'Destriped images saved to' + tempfile + filter + '/DS_*.fits')
+    write_to_file(f'Total hours elapsed: {(time.time() - t0) / 3600}')
+
 
 if __name__=='__main__':
     main()
