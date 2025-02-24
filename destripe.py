@@ -66,7 +66,7 @@ def apply_object_mask(image, mask=None):
         neighbor_mask = mask
     else:
         # Create a binary mask for high-value pixels (KL: could modify later)
-        high_value_mask = image >= 1.5 * np.median(image)
+        high_value_mask = image >= 2 * np.median(image)
 
         # Convolve the binary mask with a 5x5 kernel to include neighbors
         kernel = np.ones((5, 5), dtype=int)
