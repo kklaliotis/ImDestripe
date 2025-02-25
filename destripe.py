@@ -722,9 +722,9 @@ def main():
                 best_p = copy.deepcopy(working_p)
                 best_psi=working_psi
 
-            if convergence_crit < (0.01/current_norm): 
+            if convergence_crit < (0.01/current_norm):
                 write_to_file(f"Linear search convergence via crit<{0.01 / current_norm} in {k} iterations")
-                hdu = fits.PrimaryHDU(best_p)
+                hdu = fits.PrimaryHDU(best_p.params)
                 hdu.writeto(test_image_dir + 'best_p.fits', overwrite=True)
                 hdu = fits.PrimaryHDU(np.array(conv_params))
                 hdu.writeto(test_image_dir + 'conv_params.fits', overwrite=True)
@@ -738,7 +738,7 @@ def main():
                 continue
             else:
                 write_to_file(f"Linear search convergence via |d_cost|< {tol} in {k} iterations")
-                hdu = fits.PrimaryHDU(best_p)
+                hdu = fits.PrimaryHDU(best_p.params)
                 hdu.writeto(test_image_dir + 'best_p.fits', overwrite=True)
                 hdu = fits.PrimaryHDU(np.array(conv_params))
                 hdu.writeto(test_image_dir + 'conv_params.fits', overwrite=True)
