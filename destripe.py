@@ -181,7 +181,7 @@ class sca_img:
         :return: None
         """
         if self.params_subtracted == True:
-            write_to_file('\n WARNING: PARAMS HAVE ALREADY BEEN SUBTRACTED. ABORTING NOW')
+            write_to_file('WARNING: PARAMS HAVE ALREADY BEEN SUBTRACTED. ABORTING NOW')
             sys.exit()
 
         params_image = p.forward_par(j)  # Make destriping params into an image
@@ -228,7 +228,7 @@ class sca_img:
             make_Neff=False
 
         t_a_start = time.time()
-        write_to_file('Starting interpolation for SCA' + self.obsid + '_' + self.scaid + ' (index '+ str(ind)+')')
+        write_to_file(f'Starting interpolation for SCA {self.obsid}_{self.scaid}')
         sys.stdout.flush()
 
         N_BinA = 0
@@ -268,7 +268,7 @@ class sca_img:
                 if make_Neff:
                     N_eff += B_mask_interp
 
-        write_to_file('Interpolation done. Number of contributing SCAs: ', N_BinA)
+        write_to_file(f'Interpolation done. Number of contributing SCAs: {N_BinA}')
         new_mask = N_eff > N_eff_min
         this_interp = np.where(new_mask, this_interp/np.where(new_mask, N_eff, N_eff_min), 0) # only do the division where N_eff nonzero
         header =self.w.to_header(relax=True)
@@ -355,10 +355,10 @@ def get_scas(filter, prefix):
             this_wcs = wcs.WCS(this_file['SCI'].header)
             all_wcs.append(this_wcs)
             this_file.close()
-    write_to_file('N SCA images in this mosaic: ' + str(n_scas))
-    write_to_file('\nSCA List:', 'SCA_list.txt')
+    write_to_file(f'N SCA images in this mosaic: {str(n_scas)}')
+    write_to_file('SCA List:', 'SCA_list.txt')
     for i,s in enumerate(all_scas):
-        write_to_file(f"SCA {i}: {s}\n", "SCA_list.txt")
+        write_to_file(f"SCA {i}: {s}", "SCA_list.txt")
     return all_scas, all_wcs
 
 def interpolate_image_bilinear(image_B, image_A, interpolated_image, mask=None):
@@ -466,7 +466,7 @@ def get_ids(sca):
 ############################ Main Sequence ############################
 
 all_scas, all_wcs = get_scas(filter, image_prefix)
-write_to_file(len(all_scas), " SCAs in this mosaic")
+write_to_file(f"{len(all_scas)} SCAs in this mosaic")
 
 if test:
     if os.path.isfile(tempfile + 'ovmat.npy'):
@@ -476,14 +476,14 @@ if test:
         write_to_file('Overlap matrix computing start')
         ov_mat = compareutils.get_overlap_matrix(all_wcs, verbose=True)
         np.save(tempfile+'ovmat.npy', ov_mat)
-        write_to_file("Overlap matrix complete. Duration: ", (time.time()-ovmat_t0)/60, 'Minutes' )
-        write_to_file("Overlap matrix saved to: "+tempfile+"ovmat.npy")
+        write_to_file(f"Overlap matrix complete. Duration: {(time.time()-ovmat_t0)/60} Minutes" )
+        write_to_file(f"Overlap matrix saved to: {tempfile}ovmat.npy")
 else:
     ovmat_t0 = time.time()
     write_to_file('Overlap matrix computing start')
     ov_mat = compareutils.get_overlap_matrix(all_wcs,
                                              verbose=True)  # an N_wcs x N_wcs matrix containing fractional overlap
-    write_to_file("Overlap matrix complete. Duration: ", (time.time() - ovmat_t0) / 60, 'Minutes')
+    write_to_file(f"Overlap matrix complete. Duration: {(time.time() - ovmat_t0) / 60} Minutes")
 
 
 # Function options. KL: Could move these to another .py file and call them as modules?
@@ -573,7 +573,7 @@ def main():
 
             epsilon += local_epsilon
 
-        write_to_file('Ending cost function. Minutes elapsed: ', (time.time()-t0_cost)/60)
+        write_to_file(f'Ending cost function. Minutes elapsed: {(time.time()-t0_cost)/60}')
         return epsilon, psi
 
 
@@ -850,9 +850,9 @@ def main():
 
         header = this_sca.w
         hdu = fits.PrimaryHDU(ds_image, header=header)
-        hdu.writeto(tempfile + filter + '/DS_' + obsid + scaid + '.fits', overwrite=True)
+        hdu.writeto(tempfile + filter + '_DS_' + obsid + scaid + '.fits', overwrite=True)
 
-    write_to_file(f'Destriped images saved to' + tempfile + filter + '/DS_*.fits')
+    write_to_file(f'Destriped images saved to {tempfile + filter} _DS_*.fits')
     write_to_file(f'Total hours elapsed: {(time.time() - t0) / 3600}')
 
 
