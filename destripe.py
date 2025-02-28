@@ -51,11 +51,21 @@ def write_to_file(text, filename=None):
     """
     if filename is None:
         filename = outfile
-    with open(filename, "w") as f:
+    with open(filename, "a") as f:
         f.write(text + '\n')
     with open(filename, "r") as f:
         print(f.readlines())
 
+def save_fits(image, filename, dir=tempfile, overwrite=True):
+    """
+    Function to save an image to .fits.
+    :param image: 2D np array; the image
+    :param filename: str; the filename
+    :return: None
+    """
+    hdu = fits.PrimaryHDU(image)
+    hdu.writeto(dir+filename+'.fits', overwrite=overwrite)
+    write_to_file(f"Array {image} written out to {dir+filename+'.fits'}")
 
 # C.H. wanted to define this before any use of sca_img so moved it up.
 def apply_object_mask(image, mask=None):
@@ -124,6 +134,7 @@ class sca_img:
 
         # Calculate effecive gain
         if not os.path.isfile(tempfile + obsid+'_'+scaid+'_geff.dat'):
+            g0=time.time()
             g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='w+', shape=self.shape)
             ra, dec = self.get_coordinates(pad=2.)
             ra = ra.reshape((4090, 4090))
@@ -134,12 +145,14 @@ class sca_img:
             det_mat = np.reshape(np.linalg.det(derivs_px), (4088,4088))
             g_eff[:,:] = 1 / (np.abs(det_mat) * np.cos(np.deg2rad(dec[1:4089,1:4089])) * t_exp * A_eff )
             g_eff.flush()
+            write_to_file(f'G_eff calc duration: {time.time()-g0}')
             del g_eff
 
         self.g_eff = np.memmap(tempfile + obsid+'_'+scaid+'_geff.dat', dtype='float32', mode='r', shape=self.shape)
 
         # Add a noise frame, if requested
-        if add_noise: self.apply_noise()
+        if add_noise: self.apply_noise(save_fig=True)
+
         if add_objmask:
             _, object_mask = apply_object_mask(self.image)
             self.apply_permanent_mask()
@@ -154,8 +167,7 @@ class sca_img:
         noiseframe = np.copy(fits.open(labnoise_prefix + self.obsid + '_' + self.scaid + '.fits')['PRIMARY'].data) * 1.458 * 50 # times gain and N_frames
         self.image += noiseframe[4:4092, 4:4092]
         if save_fig:
-            hdu = fits.PrimaryHDU(self.image)
-            hdu.writeto(tempfile+'save_fig.fits', overwrite=True)
+            save_fits(self.image, self.obsid+'_'+self.scaid+'_noise')
 
     def apply_permanent_mask(self):
         """
@@ -257,11 +269,10 @@ class sca_img:
                     interpolate_image_bilinear(I_B, self, B_mask_interp, mask=I_B.mask) # interpolate B pixel mask onto A grid
 
                 if obsid_B=='670' and scaid_B=='10' and make_Neff: #only do this once
-                    hdu=fits.PrimaryHDU(B_interp)
-                    hdu.writeto(test_image_dir+'670_10_B'+self.obsid+'_'+self.scaid+'_interp.fits', overwrite=True)
+                    save_fits(B_interp, '670_10_B'+self.obsid+'_'+self.scaid+'_interp', dir=test_image_dir)
+
                 if self.obsid=='670' and self.scaid=='10' and make_Neff:
-                    hdu=fits.PrimaryHDU(B_interp)
-                    hdu.writeto(test_image_dir+'670_10_A'+obsid_B+'_'+scaid_B+'_interp.fits', overwrite=True)
+                    save_fits(B_interp, '670_10_A'+obsid_B+'_'+scaid_B+'_interp', dir=test_image_dir)
 
                 this_interp += B_interp
 
@@ -671,9 +682,9 @@ def main():
         working_p = copy.deepcopy(p)
 
         if not np.any(p.params):
-            alpha_max = 4
+            alpha_max = 1
         else:
-            alpha_max = 4 / np.max(p.params)
+            alpha_max = 1 / np.max(p.params)
 
         alpha_min = -alpha_max
         conv_params = []
