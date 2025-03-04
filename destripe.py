@@ -53,8 +53,7 @@ def write_to_file(text, filename=None):
         filename = outfile
     with open(filename, "a") as f:
         f.write(text + '\n')
-    with open(filename, "r") as f:
-        print(f.readlines())
+    print(text)
 
 def save_fits(image, filename, dir=tempfile, overwrite=True):
     """
